@@ -11,14 +11,14 @@ from qtpy.QtGui import QFontDatabase
 from qtpy.QtTest import QTest
 from qtpy.QtWidgets import QApplication
 
-from cdb.application.service import ApplicationService
-from cdb.application.examples import demo_preset
-from cdb.config import build_config
-from cdb.domain.contracts import ExecutionPolicy, StorageMode
-from cdb.ui.main_window import MainWindow, PAGE_SQL
-from cdb.ui.log_dialog import LogDialog
-from cdb.ui.preset_dialog import PresetDialog
-from cdb.ui.widgets import CdbFileDialog
+from cdw.application.service import ApplicationService
+from cdw.application.examples import demo_preset
+from cdw.config import build_config
+from cdw.domain.contracts import ExecutionPolicy, StorageMode
+from cdw.ui.main_window import MainWindow, PAGE_SQL
+from cdw.ui.log_dialog import LogDialog
+from cdw.ui.preset_dialog import PresetDialog
+from cdw.ui.widgets import CdwFileDialog
 
 
 @pytest.fixture(scope="module")
@@ -67,8 +67,8 @@ def test_user_registers_collects_and_queries(application, tmp_path, memory):
         try:
             assert isinstance(dialog, PresetDialog)
             QTest.mouseClick(dialog.demo_button, Qt.LeftButton)
-            if os.environ.get("CDB_CAPTURE_DIR") and not memory:
-                directory = Path(os.environ["CDB_CAPTURE_DIR"])
+            if os.environ.get("CDW_CAPTURE_DIR") and not memory:
+                directory = Path(os.environ["CDW_CAPTURE_DIR"])
                 directory.mkdir(parents=True, exist_ok=True)
                 dialog.grab().save(str(directory / "preset.png"))
             if memory:
@@ -95,12 +95,12 @@ def test_user_registers_collects_and_queries(application, tmp_path, memory):
         assert window.schema_tree.topLevelItemCount() == 1
         QTest.mouseClick(window.query_button, Qt.LeftButton)
         wait_idle(application, window)
-        assert window.result_model.rowCount() == 5
+        assert window.result_tabs.current_pane().source_model.rowCount() == 5
         window.sql_editor.setPlainText("SELECT hostname, cpu_percent, memory_percent, status FROM source.host_inventory ORDER BY cpu_percent DESC")
         QTest.mouseClick(window.query_button, Qt.LeftButton)
         wait_idle(application, window)
-        assert window.result_model.result.rows[0] == ("rhel-db-01", 67.2, 79.4, "warning")
-        capture = os.environ.get("CDB_CAPTURE_DIR")
+        assert window.result_tabs.current_pane().current_result().rows[0] == ("rhel-db-01", 67.2, 79.4, "warning")
+        capture = os.environ.get("CDW_CAPTURE_DIR")
         if capture and not memory:
             directory = Path(capture)
             directory.mkdir(parents=True, exist_ok=True)
@@ -179,7 +179,7 @@ def test_file_action_inside_input_opens_picker_and_preserves_text_on_cancel(appl
     def cancel_picker():
         picker = application.activeModalWidget()
         try:
-            assert isinstance(picker, CdbFileDialog)
+            assert isinstance(picker, CdwFileDialog)
         except Exception as exc:
             failures.append(exc)
         finally:
@@ -192,7 +192,7 @@ def test_file_action_inside_input_opens_picker_and_preserves_text_on_cancel(appl
         QTest.mouseClick(dialog.path_button, Qt.LeftButton)
         assert not failures
         assert dialog.path_edit.text() == original
-        if capture := os.environ.get("CDB_CAPTURE_DIR"):
+        if capture := os.environ.get("CDW_CAPTURE_DIR"):
             directory = Path(capture)
             directory.mkdir(parents=True, exist_ok=True)
             assert dialog.grab().save(str(directory / "cdw-integrated-file-field.png"))

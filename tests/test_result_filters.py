@@ -11,15 +11,15 @@ from qtpy.QtGui import QFontDatabase, QFontMetrics
 from qtpy.QtTest import QTest
 from qtpy.QtWidgets import QApplication
 
-from cdb.domain.contracts import QueryResult
-from cdb.application.service import ApplicationService
-from cdb.config import build_config
-from cdb.domain.filtering import (
+from cdw.domain.contracts import QueryResult
+from cdw.application.service import ApplicationService
+from cdw.config import build_config
+from cdw.domain.filtering import (
     ColumnFilter, ColumnKind, FilterOperator, compile_filter, distinct_values, value_key,
 )
-from cdb.ui.design.manager import ThemeManager
-from cdb.ui.models import MAX_CELL_CHARACTERS, RAW_VALUE_ROLE
-from cdb.ui.result_table import ResultTablePane
+from cdw.ui.design.manager import ThemeManager
+from cdw.ui.models import MAX_CELL_CHARACTERS, RAW_VALUE_ROLE
+from cdw.ui.result_table import ResultTablePane
 
 
 @pytest.fixture(scope="module")

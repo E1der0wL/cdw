@@ -5,7 +5,7 @@ import sys
 
 def invoke(directory, *arguments):
     return subprocess.run(
-        [sys.executable, "-m", "cdb.cli", "--data-dir", str(directory), *arguments],
+        [sys.executable, "-m", "cdw.cli", "--data-dir", str(directory), *arguments],
         capture_output=True, encoding="utf-8", timeout=30,
     )
 

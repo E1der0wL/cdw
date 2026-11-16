@@ -16,12 +16,12 @@ from qtpy.QtGui import QFontDatabase
 from qtpy.QtTest import QTest
 from qtpy.QtWidgets import QApplication
 
-from cdb.application.tasks import TaskService
-from cdb.config import build_config
-from cdb.domain.contracts import CdbError, ErrorCode, ExecutionPolicy, QueryResult
-from cdb.domain.tasks import TaskDefinition, TaskInputFormat
-from cdb.ui.task_dialog import TaskDialog
-from cdb.ui.tasks_page import TasksPage
+from cdw.application.tasks import TaskService
+from cdw.config import build_config
+from cdw.domain.contracts import CdwError, ErrorCode, ExecutionPolicy, QueryResult
+from cdw.domain.tasks import TaskDefinition, TaskInputFormat
+from cdw.ui.task_dialog import TaskDialog
+from cdw.ui.tasks_page import TasksPage
 
 
 def definition(program="import sys; print(sys.argv[1])", **changes):
@@ -45,12 +45,12 @@ def test_task_persistence_update_delete_and_duplicate_name(tmp_path):
     assert reopened.list_tasks() == [original]
     updated = reopened.save_task(replace(original, name="renamed", environment={"TASK_MODE": "updated"}))
     assert service.get_task(original.id) == updated
-    with pytest.raises(CdbError):
+    with pytest.raises(CdwError):
         service.save_task(replace(original, id="other", name="RENAMED"))
     assert service.list_tasks() == [updated]
     service.delete_task(original.id)
     assert reopened.list_tasks() == []
-    with pytest.raises(CdbError) as error:
+    with pytest.raises(CdwError) as error:
         service.get_task(original.id)
     assert error.value.code is ErrorCode.NOT_FOUND
 
@@ -95,7 +95,7 @@ def test_task_csv_uses_shared_export_delimiter_contract(tmp_path):
 
 @pytest.mark.parametrize("arguments", [("--input",), (), (None, "{input}")])
 def test_missing_or_invalid_input_argument_rejected(arguments):
-    with pytest.raises((ValueError, CdbError)):
+    with pytest.raises((ValueError, CdwError)):
         definition(arguments=arguments)
 
 
@@ -110,7 +110,7 @@ def test_task_output_failure_and_timeout_remove_temporary_input(tmp_path, input_
         (mark + "sys.stdout.write('x'*4096)", ExecutionPolicy(5, 256), ErrorCode.OUTPUT_LIMIT),
     ):
         task = service.save_task(definition(program, execution=policy, input_format=input_format))
-        with pytest.raises(CdbError) as error:
+        with pytest.raises(CdwError) as error:
             service.run_task(task.id, table())
         assert error.value.code is expected
         assert not Path(marker.read_text(encoding="utf-8")).exists()
@@ -128,7 +128,7 @@ def test_running_task_cancellation_cleans_input_and_later_runs_work(tmp_path, in
     def execute():
         try:
             service.run_task(task.id, table(), cancel)
-        except CdbError as exc:
+        except CdwError as exc:
             errors.append(exc)
 
     worker = threading.Thread(target=execute)
@@ -149,7 +149,7 @@ def test_running_task_cancellation_cleans_input_and_later_runs_work(tmp_path, in
 def test_truncated_input_is_not_silently_processed(tmp_path):
     service = TaskService(build_config(tmp_path))
     task = service.save_task(definition())
-    with pytest.raises(CdbError) as error:
+    with pytest.raises(CdwError) as error:
         service.run_task(task.id, replace(table(), truncated=True))
     assert error.value.code is ErrorCode.INVALID_QUERY
 

@@ -1,6 +1,3 @@
-"""Command Data Workspace's public launch package."""
+"""Command Data Workspace: command output as a local database."""
 
-from cdb import __version__
-from cdb.branding import APP_FULL_NAME, APP_NAME
-
-__all__ = ["APP_NAME", "APP_FULL_NAME", "__version__"]
+__version__ = "0.3.0"

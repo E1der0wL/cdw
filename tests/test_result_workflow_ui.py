@@ -15,16 +15,16 @@ from qtpy.QtGui import QFontDatabase
 from qtpy.QtTest import QTest
 from qtpy.QtWidgets import QApplication, QTabBar
 
-from cdb.application.examples import demo_preset
-from cdb.application.service import ApplicationService
-from cdb.config import build_config
-from cdb.domain.contracts import CdbError, ErrorCode, ExecutionPolicy
-from cdb.domain.filtering import FilterOperator
-from cdb.domain.tasks import TaskDefinition, TaskInputFormat
-from cdb.domain.workspace import ExportFormat
-from cdb.ui.main_window import MainWindow, PAGE_SQL, PAGE_TASKS
-from cdb.ui.result_actions import ChooseTaskDialog, ExportResultDialog, SaveMemoryDialog
-from cdb.ui.widgets import CdbMenu
+from cdw.application.examples import demo_preset
+from cdw.application.service import ApplicationService
+from cdw.config import build_config
+from cdw.domain.contracts import CdwError, ErrorCode, ExecutionPolicy
+from cdw.domain.filtering import FilterOperator
+from cdw.domain.tasks import TaskDefinition, TaskInputFormat
+from cdw.domain.workspace import ExportFormat
+from cdw.ui.main_window import MainWindow, PAGE_SQL, PAGE_TASKS
+from cdw.ui.result_actions import ChooseTaskDialog, ExportResultDialog, SaveMemoryDialog
+from cdw.ui.widgets import CdwMenu
 
 
 @pytest.fixture(scope="module")
@@ -89,7 +89,7 @@ def modal(app, action, dialog_type, fill):
 
 
 def capture(app, widget, name):
-    if folder := os.environ.get("CDB_CAPTURE_DIR"):
+    if folder := os.environ.get("CDW_CAPTURE_DIR"):
         app.processEvents()
         path = Path(folder)
         path.mkdir(parents=True, exist_ok=True)
@@ -130,7 +130,7 @@ def test_tabs_filter_share_memory_and_task_round_trip(application, window, tmp_p
     def copy_from_menu():
         menu = application.activePopupWidget()
         try:
-            assert isinstance(menu, CdbMenu)
+            assert isinstance(menu, CdwMenu)
             action = next(action for action in menu.actions() if action.text() == "텍스트로 복사")
             menu.setActiveAction(action)
             QTest.keyClick(menu, Qt.Key_Return)
@@ -242,7 +242,7 @@ def test_failed_query_and_missing_task_leave_tabs_usable(application, window):
 def test_task_repository_error_is_reported_without_losing_result(application, window, monkeypatch):
     pane = query(application, window, "SELECT 1")
     def unavailable():
-        raise CdbError(ErrorCode.INTERNAL, "task metadata unavailable")
+        raise CdwError(ErrorCode.INTERNAL, "task metadata unavailable")
     monkeypatch.setattr(window.task_service, "list_tasks", unavailable)
     QTest.mouseClick(window.task_button, Qt.LeftButton)
     assert window.log_dialog.isVisible() and "task metadata unavailable" in window.log_view.toPlainText()

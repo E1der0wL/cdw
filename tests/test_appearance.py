@@ -5,33 +5,34 @@ import sqlite3
 
 import pytest
 
-from cdb.application.service import ApplicationService
-from cdb.config import build_config
-from cdb.domain.appearance import AppearanceSettings, ColorOverrides, ColorTheme, ThemeMode
-from cdb.ui.design.colors import contrast
-from cdb.ui.design.spec import resolve_style
+from cdw.application.service import ApplicationService
+from cdw.config import build_config
+from cdw.domain.appearance import AppearanceSettings, ColorOverrides, ThemeMode
+from cdw.domain.contracts import CdwError, ErrorCode
+from cdw.ui.design.colors import contrast
+from cdw.ui.design.spec import resolve_style
 
 
-def test_existing_v1_profile_keeps_preferences_and_adds_optional_colors(tmp_path):
-    legacy = {"version": 1, "mode": "dark", "color_theme": "violet", "font_family": "Example Font",
-              "code_font_family": "Example Mono", "font_size": 12, "ui_scale": 1.25}
+def test_current_appearance_survives_profile_restart(tmp_path):
+    settings = AppearanceSettings(mode=ThemeMode.DARK, font_family="Example Font", code_font_family="Example Mono",
+                                  font_size=12, ui_scale=1.25).with_active_colors(
+        accent="#FA8040", background="#252525", foreground="#eeeeee", secondary_background="#333333")
     service = ApplicationService(build_config(tmp_path))
     try:
+        service.save_appearance(settings)
+        assert service.load_appearance() == settings
         with sqlite3.connect(service.config.metadata_database) as connection:
-            connection.execute("INSERT INTO app_settings VALUES (?, ?)", ("appearance", json.dumps(legacy)))
-        restored = service.load_appearance()
-        assert restored == AppearanceSettings(mode=ThemeMode.DARK, color_theme=ColorTheme.VIOLET,
-                                              font_family="Example Font", code_font_family="Example Mono", font_size=12, ui_scale=1.25)
-        # Reading old profiles is non-destructive; saving explicitly upgrades them.
-        with sqlite3.connect(service.config.metadata_database) as connection:
-            assert json.loads(connection.execute("SELECT definition FROM app_settings").fetchone()[0]) == legacy
-        updated = restored.with_active_colors(accent="#FA8040", background="#252525", foreground="#eeeeee")
-        service.save_appearance(updated)
-        assert service.load_appearance() == updated
-        assert updated.dark_colors.accent == "#fa8040"
-        assert updated.light_colors == ColorOverrides()
+            payload = json.loads(connection.execute("SELECT definition FROM app_settings").fetchone()[0])
+        assert payload["version"] == 4
+        assert "color_theme" not in payload
+        assert settings.dark_colors.accent == "#fa8040"
     finally:
         service.close()
+    reopened = ApplicationService(build_config(tmp_path))
+    try:
+        assert reopened.load_appearance() == settings
+    finally:
+        reopened.close()
 
 
 @pytest.mark.parametrize("value", ["#abc", "red", "#12345g", "#00112233", "x; color: red", None, 123])
@@ -67,26 +68,28 @@ def test_background_roles_keep_primary_and_secondary_colors_independent(mode, ba
     assert AppearanceSettings.from_dict(custom.preferences.to_dict()) == custom.preferences
 
 
-def test_existing_v2_colors_survive_secondary_background_upgrade(tmp_path):
-    legacy = AppearanceSettings(mode=ThemeMode.DARK, font_size=12).with_active_colors(
-        accent="#80cabc", background="#242424", foreground="#ededed").to_dict()
-    legacy["version"] = 2
-    for mode in ("light_colors", "dark_colors"):
-        del legacy[mode]["secondary_background"]
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_removed_appearance_versions_are_rejected_without_rewriting(tmp_path, version):
+    unsupported = AppearanceSettings(mode=ThemeMode.DARK).to_dict()
+    unsupported.update(version=version, color_theme="violet")
     service = ApplicationService(build_config(tmp_path))
     try:
         with sqlite3.connect(service.config.metadata_database) as connection:
-            connection.execute("INSERT INTO app_settings VALUES (?, ?)", ("appearance", json.dumps(legacy)))
-        restored = service.load_appearance()
-        assert restored.active_colors == ColorOverrides(accent="#80cabc", background="#242424", foreground="#ededed")
-        assert restored.font_size == 12
-        updated = restored.with_active_colors(secondary_background="#353535")
-        service.save_appearance(updated)
-        assert service.load_appearance() == updated
-        assert updated.to_dict()["version"] == 3
-        assert updated.light_colors.secondary_background == ""
+            connection.execute("INSERT INTO app_settings VALUES (?, ?)", ("appearance", json.dumps(unsupported)))
+        with pytest.raises(CdwError) as error:
+            service.load_appearance()
+        assert error.value.code is ErrorCode.STORAGE_FAILED
+        with sqlite3.connect(service.config.metadata_database) as connection:
+            assert json.loads(connection.execute("SELECT definition FROM app_settings").fetchone()[0]) == unsupported
     finally:
         service.close()
+
+
+def test_current_settings_reject_removed_accent_preset_field():
+    payload = AppearanceSettings().to_dict()
+    payload["color_theme"] = "blue"
+    with pytest.raises(ValueError):
+        AppearanceSettings.from_dict(payload)
 
 
 @pytest.mark.parametrize("accent", ["#ffff00", "#ffffff", "#000000", "#143b99"])

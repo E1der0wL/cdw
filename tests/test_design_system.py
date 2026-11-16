@@ -14,18 +14,18 @@ from qtpy.QtGui import QColor, QFontDatabase, QFontMetrics, QHelpEvent, QPalette
 from qtpy.QtTest import QTest
 from qtpy.QtWidgets import QApplication, QDialogButtonBox, QLineEdit, QToolTip
 
-from cdb.application.examples import demo_preset
-from cdb.application.service import ApplicationService
-from cdb.config import build_config
-from cdb.domain.appearance import AppearanceSettings, ColorOverrides, ColorTheme, ThemeMode
-from cdb.domain.contracts import CdbError
-from cdb.ui.design.icons import IconName, IconProvider, IconVariant, svg_source
-from cdb.ui.design.manager import ThemeManager
-from cdb.ui.design.spec import ButtonVariant, LayoutRole, MetricMode, MetricRule, TextRole, resolve_style
-from cdb.ui.main_window import MainWindow, PAGE_SETTINGS, PAGE_SQL
-from cdb.ui.preset_dialog import PresetDialog
-from cdb.ui.settings_page import DesignPreviewDialog
-from cdb.ui.widgets import CdbButton, CdbCard, CdbColorDialog, CdbComboBox, CdbLabel, CdbLineEdit, CdbVBoxLayout
+from cdw.application.examples import demo_preset
+from cdw.application.service import ApplicationService
+from cdw.config import build_config
+from cdw.domain.appearance import AppearanceSettings, ColorOverrides, ThemeMode
+from cdw.domain.contracts import CdwError
+from cdw.ui.design.icons import IconName, IconProvider, IconVariant, svg_source
+from cdw.ui.design.manager import ThemeManager
+from cdw.ui.design.spec import ButtonVariant, LayoutRole, MetricMode, MetricRule, TextRole, resolve_style
+from cdw.ui.main_window import MainWindow, PAGE_SETTINGS, PAGE_SQL
+from cdw.ui.preset_dialog import PresetDialog
+from cdw.ui.settings_page import DesignPreviewDialog
+from cdw.ui.widgets import CdwButton, CdwCard, CdwColorDialog, CdwComboBox, CdwLabel, CdwLineEdit, CdwVBoxLayout
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +58,7 @@ def window(application, tmp_path):
 
 
 def capture(app, widget, name):
-    if directory := os.environ.get("CDB_CAPTURE_DIR"):
+    if directory := os.environ.get("CDW_CAPTURE_DIR"):
         app.processEvents()
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
@@ -94,7 +94,7 @@ def test_settings_change_existing_and_new_widgets_and_survive_restart(applicatio
     assert dialog.name_edit.minimumHeight() > QFontMetrics(dialog.name_edit.font()).height()
     assert dialog.layout().spacing() > initial_spacing
     assert window.nav_buttons[PAGE_SQL].icon().cacheKey() != initial_icon
-    fresh = CdbLineEdit()
+    fresh = CdwLineEdit()
     assert fresh.font() == dialog.name_edit.font()
     fresh.deleteLater()
     dialog.close()
@@ -124,10 +124,10 @@ def test_reset_and_hidden_internal_rules(application, window):
                       "appearance_font_size", "appearance_scale", "appearance_accent", "appearance_background",
                       "appearance_secondary_background", "appearance_foreground"}
     assert {control.objectName() for control in page._controls} == expected_names
-    assert page.findChild(CdbComboBox, "appearance_color") is None
+    assert page.findChild(CdwComboBox, "appearance_color") is None
     with sqlite3.connect(window.service.config.metadata_database) as connection:
         saved = json.loads(connection.execute("SELECT definition FROM app_settings WHERE key='appearance'").fetchone()[0])
-    assert set(saved) == {"version", "mode", "color_theme", "font_family", "code_font_family", "font_size", "ui_scale", "light_colors", "dark_colors"}
+    assert set(saved) == {"version", "mode", "font_family", "code_font_family", "font_size", "ui_scale", "light_colors", "dark_colors"}
     assert saved["light_colors"] == saved["dark_colors"] == {
         "accent": "", "background": "", "foreground": "", "secondary_background": ""}
     capture(application, window, "settings-light-teal")
@@ -196,17 +196,17 @@ def test_custom_colors_apply_globally_and_survive_mode_switch_and_restart(applic
     assert window.log_bar.palette().color(QPalette.Window).name() == "#202020"
     assert dialog.name_edit.palette().color(QPalette.Base).name() == expected.background
     assert window.sql_editor.palette().color(QPalette.Base).name() == expected.secondary_background
-    assert window.result_table.palette().color(QPalette.AlternateBase).name() == expected.secondary_background
-    assert window.result_table.palette().color(QPalette.Text).name() == expected.foreground
+    assert window.result_tabs.current_pane().view.palette().color(QPalette.AlternateBase).name() == expected.secondary_background
+    assert window.result_tabs.current_pane().view.palette().color(QPalette.Text).name() == expected.foreground
     # Collection is disabled until a preset exists; disabled controls keep the base surface.
     assert not window.collect_button.isEnabled()
     assert window.collect_button.palette().color(QPalette.Button).name() == expected.background
-    primary = CdbButton("실행", variant=ButtonVariant.PRIMARY)
+    primary = CdwButton("실행", variant=ButtonVariant.PRIMARY)
     primary.ensurePolished()
     assert primary.palette().color(QPalette.Button).name() == expected.accent
     primary.deleteLater()
     assert window.collect_button.icon().cacheKey() != original_icon
-    fresh = CdbLineEdit()
+    fresh = CdwLineEdit()
     assert fresh.palette().color(QPalette.Base).name() == expected.background
     fresh.deleteLater()
     dialog.close()
@@ -259,7 +259,7 @@ def test_color_picker_accepts_and_cancel_preserves_saved_color(application, wind
     def choose(accept):
         picker = application.activeModalWidget()
         try:
-            assert isinstance(picker, CdbColorDialog)
+            assert isinstance(picker, CdwColorDialog)
             picker.setCurrentColor(QColor("#f09151" if accept else "#713c99"))
             capture(application, picker, "color-picker")
             buttons = picker.findChild(QDialogButtonBox)
@@ -353,12 +353,12 @@ def test_theme_change_during_collection_keeps_data_and_editor(application, windo
     sql = "SELECT value FROM source.host_inventory"
     window.sql_editor.setPlainText(sql)
     window.collect()
-    window.theme.set_preferences(AppearanceSettings(mode=ThemeMode.DARK, color_theme=ColorTheme.BLUE))
+    window.theme.set_preferences(AppearanceSettings(mode=ThemeMode.DARK).with_active_colors(accent="#85b4ff"))
     wait_idle(application, window)
     assert window.sql_editor.toPlainText() == sql
     window.run_query()
     wait_idle(application, window)
-    assert window.result_model.result.rows == ((17,),)
+    assert window.result_tabs.current_pane().current_result().rows == ((17,),)
     assert "1행 저장" in window.log_view.toPlainText()
     capture(application, window, "workspace-dark-blue")
 
@@ -392,14 +392,14 @@ def test_sidebar_drag_width_survives_collapse_and_font_scaling(application, wind
 
 
 @pytest.mark.parametrize("mode", list(ThemeMode))
-@pytest.mark.parametrize("color", list(ColorTheme))
-def test_all_theme_combinations_are_applied(application, mode, color):
-    manager = ThemeManager(AppearanceSettings(mode=mode, color_theme=color))
+@pytest.mark.parametrize("accent", ["", "#85b4ff"])
+def test_modes_and_custom_accent_are_applied(application, mode, accent):
+    manager = ThemeManager(AppearanceSettings(mode=mode).with_active_colors(accent=accent))
     manager.activate()
-    panel = CdbCard()
-    layout = CdbVBoxLayout(panel, role=LayoutRole.CARD)
-    label = CdbLabel("한글 · readable", role=TextRole.BODY)
-    button = CdbButton("실행", variant=ButtonVariant.PRIMARY, icon=IconName.PLAY)
+    panel = CdwCard()
+    layout = CdwVBoxLayout(panel, role=LayoutRole.CARD)
+    label = CdwLabel("한글 · readable", role=TextRole.BODY)
+    button = CdwButton("실행", variant=ButtonVariant.PRIMARY, icon=IconName.PLAY)
     layout.addWidget(label)
     layout.addWidget(button)
     panel.show()
@@ -413,7 +413,7 @@ def test_all_theme_combinations_are_applied(application, mode, color):
 
 
 def test_widget_gallery_dark_and_scaled_layout_remain_accessible(application, window):
-    window.theme.set_preferences(AppearanceSettings(mode=ThemeMode.DARK, color_theme=ColorTheme.BLUE, ui_scale=1.25))
+    window.theme.set_preferences(AppearanceSettings(mode=ThemeMode.DARK, ui_scale=1.25).with_active_colors(accent="#85b4ff"))
     preview = DesignPreviewDialog(window, theme=window.theme)
     preview.show()
     application.processEvents()
@@ -425,8 +425,8 @@ def test_widget_gallery_dark_and_scaled_layout_remain_accessible(application, wi
     scroll = window.pages.currentWidget()
     assert scroll.verticalScrollBar().maximum() > 0
     for field in window.settings_page.findChildren(QLineEdit):
-        # Spin-box internal editors are sized by Qt, other inputs by CDB.
-        if isinstance(field, CdbLineEdit):
+        # Spin-box internal editors are sized by Qt, other inputs by CDW.
+        if isinstance(field, CdwLineEdit):
             assert field.height() >= QFontMetrics(field.font()).height()
     capture(application, window, "settings-large")
 
@@ -476,29 +476,25 @@ def test_failed_save_preserves_running_theme(application):
     assert manager.current is before
 
 
-def test_existing_profile_presets_survive_appearance_migration(tmp_path):
+@pytest.mark.parametrize("version", [0, 1, 3])
+def test_unsupported_metadata_is_rejected_without_migration(tmp_path, version):
     config = build_config(tmp_path)
     service = ApplicationService(config)
     preset = service.save_preset(demo_preset(config))
     service.close()
-    # Simulate an untouched v0.1 profile's schema, using a disposable fixture DB.
     with sqlite3.connect(config.metadata_database) as connection:
-        connection.execute("DROP TABLE app_settings")
-        connection.execute("PRAGMA user_version=1")
-    migrated = ApplicationService(config)
-    try:
-        assert migrated.get_preset(preset.id) == preset
-        assert migrated.load_appearance() == AppearanceSettings()
-        expected = AppearanceSettings(mode=ThemeMode.DARK)
-        migrated.save_appearance(expected)
-        assert migrated.load_appearance() == expected
-    finally:
-        migrated.close()
+        connection.execute(f"PRAGMA user_version={version}")
+    before = config.metadata_database.read_bytes()
+    with pytest.raises(CdwError):
+        ApplicationService(config)
+    assert config.metadata_database.read_bytes() == before
+    with sqlite3.connect(config.metadata_database) as connection:
+        assert connection.execute("SELECT id FROM presets").fetchone()[0] == preset.id
 
 
-def test_page_code_uses_cdb_widget_and_layout_subclasses():
+def test_page_code_uses_cdw_widget_and_layout_subclasses():
     # Architectural boundary: Qt widgets are only constructed inside the common layer.
-    directory = Path(__file__).parents[1] / "src" / "cdb" / "ui"
+    directory = Path(__file__).parents[1] / "src" / "cdw" / "ui"
     forbidden = {"QWidget", "QPushButton", "QLabel", "QLineEdit", "QComboBox", "QVBoxLayout", "QHBoxLayout",
                  "QFormLayout", "QDialog", "QMainWindow", "QPlainTextEdit", "QTableView", "QTableWidget", "QFrame"}
     for filename in ("main_window.py", "preset_dialog.py", "settings_page.py", "log_dialog.py",

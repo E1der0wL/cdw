@@ -21,19 +21,17 @@ dependencies = [
 dev = ["pytest==9.0.2"]
 
 [project.scripts]
-cdw = "cdb.cli:main"
-cdw-gui = "cdb.__main__:main"
-cdb = "cdb.cli:main"
-cdb-gui = "cdb.__main__:main"
+cdw = "cdw.cli:main"
+cdw-gui = "cdw.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = {attr = "cdb.__version__"}
+version = {attr = "cdw.__version__"}
 
 [tool.setuptools.package-data]
-cdb = ["assets/heroicons/outline/*.svg", "assets/heroicons/solid/*.svg", "assets/heroicons/LICENSE", "assets/heroicons/manifest.json"]
+cdw = ["assets/heroicons/outline/*.svg", "assets/heroicons/solid/*.svg", "assets/heroicons/LICENSE", "assets/heroicons/manifest.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

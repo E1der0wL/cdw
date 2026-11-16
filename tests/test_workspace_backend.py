@@ -16,10 +16,10 @@ from uuid import uuid4
 import duckdb
 import pytest
 
-from cdb.application.examples import demo_preset
-from cdb.application.service import ApplicationService
-from cdb.config import build_config
-from cdb.domain.contracts import CdbError, ErrorCode, StorageMode, StorageTarget
+from cdw.application.examples import demo_preset
+from cdw.application.service import ApplicationService
+from cdw.config import build_config
+from cdw.domain.contracts import CdwError, ErrorCode, StorageMode, StorageTarget
 
 
 @pytest.fixture
@@ -116,14 +116,14 @@ def test_empty_typed_results_and_empty_filter_export_keep_schema(service, tmp_pa
 def test_memory_name_collision_and_release_preserve_saved_table(service):
     snapshot = service.query_workspace(None, "SELECT 1 id")
     service.save_result_table(snapshot.id, "saved")
-    with pytest.raises(CdbError) as collision:
+    with pytest.raises(CdwError) as collision:
         service.save_result_table(snapshot.id, "saved")
     assert collision.value.code is ErrorCode.PRESET_CONFLICT
-    with pytest.raises(CdbError):
+    with pytest.raises(CdwError):
         service.save_result_table(snapshot.id, 'bad; DROP TABLE memory.saved')
     service.release_result(snapshot.id)
     service.release_result(snapshot.id)
-    with pytest.raises(CdbError) as gone:
+    with pytest.raises(CdwError) as gone:
         service.copy_result(snapshot.id, "text")
     assert gone.value.code is ErrorCode.NOT_FOUND
     assert service.query_workspace(None, "SELECT * FROM memory.saved").result.rows == ((1,),)
@@ -177,11 +177,11 @@ def test_failed_exports_leave_existing_target_and_protect_source_and_metadata(se
     target = tmp_path / "existing.csv"
     target.write_text("keep me", encoding="utf-8")
     for delimiter in ("", "||", "\n", '"'):
-        with pytest.raises(CdbError):
+        with pytest.raises(CdwError):
             service.export_result(snapshot.id, target, "csv", delimiter)
         assert target.read_text(encoding="utf-8") == "keep me"
     for path in (preset.storage.key, service.config.metadata_database):
-        with pytest.raises(CdbError):
+        with pytest.raises(CdwError):
             service.export_result(snapshot.id, path, "duckdb")
     assert service.query(preset.id, "SELECT count(*) FROM source.host_inventory").rows == ((1,),)
     assert service.get_preset(preset.id) == preset
@@ -191,7 +191,7 @@ def test_failed_exports_leave_existing_target_and_protect_source_and_metadata(se
 @pytest.mark.parametrize("indices", [(-1,), (1,), (True,), (0.5,)])
 def test_invalid_row_selections_do_not_create_memory_tables(service, indices):
     snapshot = service.query_workspace(None, "SELECT 1 id")
-    with pytest.raises(CdbError):
+    with pytest.raises(CdwError):
         service.save_result_table(snapshot.id, "invalid", indices)
     assert service.workspace_tables() == []
 
@@ -199,7 +199,7 @@ def test_invalid_row_selections_do_not_create_memory_tables(service, indices):
 def test_workspace_query_cancellation_keeps_engine_usable(service):
     cancellation = threading.Event()
     cancellation.set()
-    with pytest.raises(CdbError) as stopped:
+    with pytest.raises(CdwError) as stopped:
         service.query_workspace(None, "SELECT 1", cancellation)
     assert stopped.value.code is ErrorCode.CANCELLED
     assert service.query_workspace(None, "SELECT 2").result.rows == ((2,),)
@@ -216,7 +216,7 @@ def test_running_workspace_query_is_interruptible_and_can_be_retried(service):
     timer = threading.Timer(0.2, interrupt)
     timer.start()
     try:
-        with pytest.raises(CdbError) as stopped:
+        with pytest.raises(CdwError) as stopped:
             service.query_workspace(None, "SELECT sum(a.i*b.i) FROM range(1000000) a(i), range(1000000) b(i)", cancellation)
         assert stopped.value.code is ErrorCode.CANCELLED
     finally:
@@ -227,7 +227,7 @@ def test_running_workspace_query_is_interruptible_and_can_be_retried(service):
 
 
 def test_atomic_export_preserves_existing_output_on_replace_failure(service, tmp_path, monkeypatch):
-    import cdb.infrastructure.duckdb_store as storage
+    import cdw.infrastructure.duckdb_store as storage
 
     snapshot = service.query_workspace(None, "SELECT 1 AS id")
     output = tmp_path / "existing.csv"
@@ -237,7 +237,7 @@ def test_atomic_export_preserves_existing_output_on_replace_failure(service, tmp
         raise PermissionError("output is in use")
 
     monkeypatch.setattr(storage.os, "replace", fail_replace)
-    with pytest.raises(CdbError) as failed:
+    with pytest.raises(CdwError) as failed:
         service.export_result(snapshot.id, output, "csv")
     assert failed.value.code is ErrorCode.STORAGE_FAILED
     assert output.read_text(encoding="utf-8") == "previous"
@@ -265,7 +265,7 @@ def test_saved_memory_tables_disappear_after_restart_but_file_catalog_remains(tm
     try:
         assert len(reopened.workspace_tables()) == 1
         assert reopened.workspace_tables()[0].updated_at
-        with pytest.raises(CdbError):
+        with pytest.raises(CdwError):
             reopened.query_workspace(preset.id, "SELECT * FROM memory.session_only")
     finally:
         reopened.close()
@@ -283,8 +283,8 @@ def test_fresh_qt_worker_exports_large_selection_before_any_collection(tmp_path)
         import duckdb
         from qtpy.QtTest import QTest
         from qtpy.QtWidgets import QApplication
-        from cdb.application.service import ApplicationService
-        from cdb.config import build_config
+        from cdw.application.service import ApplicationService
+        from cdw.config import build_config
 
         directory = Path(sys.argv[1])
         app = QApplication([])

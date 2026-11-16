@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 
 VERSION = "v2.2.0"
 SOURCE = f"https://codeload.github.com/tailwindlabs/heroicons/tar.gz/refs/tags/{VERSION}"
-TARGET = Path(__file__).resolve().parents[1] / "src" / "cdb" / "assets" / "heroicons"
+TARGET = Path(__file__).resolve().parents[1] / "src" / "cdw" / "assets" / "heroicons"
 VARIANTS = ("outline", "solid")
 NAMES = (
     "home", "circle-stack", "cpu-chip", "calendar-days", "queue-list", "cog-6-tooth", "user-circle",

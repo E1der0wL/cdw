@@ -30,7 +30,7 @@ def dispose_closed_application_windows():
     application = QApplication.instance()
     if application is None:
         return
-    from cdb.ui.main_window import MainWindow
+    from cdw.ui.main_window import MainWindow
 
     for widget in application.topLevelWidgets():
         if isinstance(widget, MainWindow) and widget._closed:
