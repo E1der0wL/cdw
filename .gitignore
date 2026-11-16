@@ -1,0 +1,17 @@
+.venv/
+.bootstrap/
+.python/
+.cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+wheelhouse/
+*.log
+.artifacts/
+*.duckdb
+*.duckdb.wal
+*.sqlite
+*.sqlite-*

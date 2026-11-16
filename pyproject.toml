@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools==75.8.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cdw-desktop"
+dynamic = ["version"]
+description = "A local command-to-database workbench for offline environments"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "QtPy==2.4.3",
+  "PySide6==6.9.3",
+  "duckdb==1.4.3",
+  "polars==1.36.1",
+  "pyarrow==22.0.0",
+  "pytz==2026.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.0.2"]
+
+[project.scripts]
+cdw = "cdb.cli:main"
+cdw-gui = "cdb.__main__:main"
+cdb = "cdb.cli:main"
+cdb-gui = "cdb.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "cdb.__version__"}
+
+[tool.setuptools.package-data]
+cdb = ["assets/heroicons/outline/*.svg", "assets/heroicons/solid/*.svg", "assets/heroicons/LICENSE", "assets/heroicons/manifest.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
