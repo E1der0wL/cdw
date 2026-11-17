@@ -33,15 +33,17 @@ QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: top rig
 QComboBox::drop-down:hover, QComboBox::drop-down:on {{ background: {hover}; }}
 QComboBox::drop-down:disabled {{ background: {disabled_bg}; }}
 QComboBox::down-arrow {{ image: none; width: 0; height: 0; }}
-QDoubleSpinBox {{ padding-right: {field_button_width}px; }}
-QDoubleSpinBox > QLineEdit {{ background: transparent; border: none; padding: 0; }}
-QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ subcontrol-origin: padding;
+QSpinBox, QDoubleSpinBox {{ padding-right: {field_button_width}px; }}
+QSpinBox > QLineEdit, QDoubleSpinBox > QLineEdit {{ background: transparent; border: none; padding: 0; }}
+QSpinBox::up-button, QSpinBox::down-button, QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{ subcontrol-origin: padding;
     width: {field_button_width}px; background: transparent; border: none; border-radius: {underline_radius}px; }}
-QDoubleSpinBox::up-button {{ subcontrol-position: top right; }}
-QDoubleSpinBox::down-button {{ subcontrol-position: bottom right; }}
+QSpinBox::up-button, QDoubleSpinBox::up-button {{ subcontrol-position: top right; }}
+QSpinBox::down-button, QDoubleSpinBox::down-button {{ subcontrol-position: bottom right; }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover,
 QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{ background: {hover}; }}
+QSpinBox::up-button:disabled, QSpinBox::down-button:disabled,
 QDoubleSpinBox::up-button:disabled, QDoubleSpinBox::down-button:disabled {{ background: transparent; }}
-QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow {{ image: none; width: 0; height: 0; }}
+QSpinBox::up-arrow, QSpinBox::down-arrow, QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow {{ image: none; width: 0; height: 0; }}
 QComboBox QAbstractItemView {{ background: {surface}; color: {text};
     border: none; border-radius: {popup_radius}px; padding: {gap_small}px; outline: none;
     selection-background-color: {selection}; selection-color: {selection_text}; }}

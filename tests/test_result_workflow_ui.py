@@ -15,16 +15,17 @@ from qtpy.QtGui import QFontDatabase
 from qtpy.QtTest import QTest
 from qtpy.QtWidgets import QApplication, QTabBar
 
-from cdw.application.examples import demo_preset
-from cdw.application.service import ApplicationService
 from cdw.config import build_config
 from cdw.domain.contracts import CdwError, ErrorCode, ExecutionPolicy
 from cdw.domain.filtering import FilterOperator
 from cdw.domain.tasks import TaskDefinition, TaskInputFormat
 from cdw.domain.workspace import ExportFormat
-from cdw.ui.main_window import MainWindow, PAGE_SQL, PAGE_TASKS
+from cdw.server.client import RemoteApplicationService
+from cdw.ui.main_window import MainWindow
+from cdw.ui.pages.base import PageId
 from cdw.ui.result_actions import ChooseTaskDialog, ExportResultDialog, SaveMemoryDialog
 from cdw.ui.widgets import CdwMenu
+from helpers import make_preset, stop_server
 
 
 @pytest.fixture(scope="module")
@@ -42,30 +43,39 @@ def idle(app, window):
         app.processEvents()
         QTest.qWait(10)
     app.processEvents()
-    assert not window.controller.busy, window.log_view.toPlainText()
+    assert not window.controller.busy, window.log_dialog.log_view.toPlainText()
 
 
 @pytest.fixture
 def window(application, tmp_path):
-    window = MainWindow(ApplicationService(build_config(tmp_path)))
-    window.show()
-    idle(application, window)
-    window.show_page(PAGE_SQL)
-    yield window
-    idle(application, window)
-    window.close()
-    application.processEvents()
+    service = RemoteApplicationService(build_config(tmp_path))
+    window = None
+    try:
+        window = MainWindow(service)
+        window.show()
+        idle(application, window)
+        window.show_page(PageId.SQL)
+        yield window
+    finally:
+        try:
+            if window is not None:
+                idle(application, window)
+                window.close()
+                application.processEvents()
+        finally:
+            service.close()
+            stop_server(service.config)
 
 
 def query(app, window, sql):
-    window.show_page(PAGE_SQL)
-    window.sql_editor.setPlainText(sql)
-    before = window.result_tabs.count()
-    QTest.mouseClick(window.query_button, Qt.LeftButton)
+    window.show_page(PageId.SQL)
+    window.page(PageId.SQL).sql_editor.setPlainText(sql)
+    before = window.page(PageId.SQL).result_tabs.count()
+    QTest.mouseClick(window.page(PageId.SQL).query_button, Qt.LeftButton)
     idle(app, window)
-    assert window.result_tabs.count() == before + 1, window.log_view.toPlainText()
-    assert window.status_label.text().endswith("SQL 조회 완료")
-    return window.result_tabs.current_pane()
+    assert window.page(PageId.SQL).result_tabs.count() == before + 1, window.log_dialog.log_view.toPlainText()
+    assert window.log_bar.message_label.text().endswith("SQL 조회 완료")
+    return window.page(PageId.SQL).result_tabs.current_pane()
 
 
 def modal(app, action, dialog_type, fill):
@@ -97,18 +107,18 @@ def capture(app, widget, name):
 
 
 def test_tabs_filter_share_memory_and_task_round_trip(application, window, tmp_path):
-    preset = window.service.save_preset(demo_preset(window.service.config))
-    window.refresh_presets(preset.id)
+    preset = window.service.save_preset(make_preset(window.service.config))
+    window.page(PageId.SQL).refresh_presets(preset.id)
     idle(application, window)
-    QTest.mouseClick(window.collect_button, Qt.LeftButton)
+    QTest.mouseClick(window.page(PageId.SQL).collect_button, Qt.LeftButton)
     idle(application, window)
     sql = "SELECT hostname, cpu_percent, memory_percent, status FROM source.host_inventory"
     first = query(application, window, sql)
     second = query(application, window, sql)
-    assert [window.result_tabs.tabText(i) for i in range(2)] == ["host_inventory", "host_inventory (2)"]
+    assert [window.page(PageId.SQL).result_tabs.tabText(i) for i in range(2)] == ["host_inventory", "host_inventory (2)"]
     assert first is not second and first.source_model.rowCount() == second.source_model.rowCount() == 5
-    assert window.schema_tree.topLevelItem(0).text(0) == "파일"
-    assert window.schema_tree.topLevelItem(0).text(2) != "—"
+    assert window.page(PageId.SQL).schema_tree.topLevelItem(0).text(0) == "파일"
+    assert window.page(PageId.SQL).schema_tree.topLevelItem(0).text(2) != "—"
 
     # Use the column's real button and popup rather than setting a proxy filter.
     QTest.mouseClick(second.header.viewport(), Qt.LeftButton, pos=second.header.button_rect(1).center())
@@ -139,54 +149,54 @@ def test_tabs_filter_share_memory_and_task_round_trip(application, window, tmp_p
             if menu:
                 menu.close()
     QTimer.singleShot(30, copy_from_menu)
-    assert window.share_button.isEnabled() and window.share_button.isVisible()
-    QTest.mouseClick(window.share_button, Qt.LeftButton)
+    assert window.page(PageId.SQL).share_button.isEnabled() and window.page(PageId.SQL).share_button.isVisible()
+    QTest.mouseClick(window.page(PageId.SQL).share_button, Qt.LeftButton)
     assert not errors, errors
     idle(application, window)
     text_rows = list(csv.reader(io.StringIO(application.clipboard().text()), delimiter="\t"))
-    assert tuple(row[0] for row in text_rows[1:]) == expected, window.log_view.toPlainText()
-    window.copy_result("html")
+    assert tuple(row[0] for row in text_rows[1:]) == expected, window.log_dialog.log_view.toPlainText()
+    window.page(PageId.SQL).copy_result("html")
     idle(application, window)
     mime = application.clipboard().mimeData()
     assert mime.hasHtml() and mime.hasText()
     assert mime.html().count("<tr>") == 4
 
-    modal(application, lambda: QTest.mouseClick(window.save_table_button, Qt.LeftButton), SaveMemoryDialog,
+    modal(application, lambda: QTest.mouseClick(window.page(PageId.SQL).save_table_button, Qt.LeftButton), SaveMemoryDialog,
           lambda dialog: dialog.name_edit.setText("cpu_hot"))
     idle(application, window)
-    memory_items = [window.schema_tree.topLevelItem(i) for i in range(window.schema_tree.topLevelItemCount())
-                    if window.schema_tree.topLevelItem(i).data(0, Qt.UserRole) == "memory.cpu_hot"]
+    memory_items = [window.page(PageId.SQL).schema_tree.topLevelItem(i) for i in range(window.page(PageId.SQL).schema_tree.topLevelItemCount())
+                    if window.page(PageId.SQL).schema_tree.topLevelItem(i).data(0, Qt.UserRole) == "memory.cpu_hot"]
     assert len(memory_items) == 1 and memory_items[0].text(0) == "메모리"
     assert memory_items[0].text(2) != "—"
     saved = query(application, window, "SELECT * FROM memory.cpu_hot")
     assert saved.current_result().rows == second.current_result().rows
-    assert window.result_tabs.tabText(2) == "cpu_hot"
+    assert window.page(PageId.SQL).result_tabs.tabText(2) == "cpu_hot"
 
     # The chooser gets the definition from the real task page's persisted repository.
     program = "import json,sys; d=json.load(open(sys.argv[1],encoding='utf-8')); print('task-rows:'+','.join(r[0] for r in d['rows']))"
     task = TaskDefinition("inspect-cpu", "CPU 결과 확인", sys.executable, ("-c", program, "{input}"),
-                          None, {}, TaskInputFormat.JSON, ",", ExecutionPolicy(5, 1024 * 1024))
+                          None, dict(os.environ), TaskInputFormat.JSON, ",", ExecutionPolicy(5, 1024 * 1024))
     window.task_service.save_task(task)
-    window.tasks_page.refresh()
-    modal(application, lambda: QTest.mouseClick(window.task_button, Qt.LeftButton), ChooseTaskDialog,
+    window.page(PageId.TASKS).refresh()
+    modal(application, lambda: QTest.mouseClick(window.page(PageId.SQL).task_button, Qt.LeftButton), ChooseTaskDialog,
           lambda dialog: dialog.task_combo.setCurrentIndex(dialog.task_combo.findData(task.id)))
     idle(application, window)
-    assert "task-rows:" + ",".join(expected) in window.log_view.toPlainText()
-    assert "작업 완료" in window.status_label.text()
+    assert "task-rows:" + ",".join(expected) in window.log_dialog.log_view.toPlainText()
+    assert "작업 완료" in window.log_bar.message_label.text()
     capture(application, window, "workspace-result-tabs")
 
     # Refreshing command data preserves snapshots and each tab's filters.
-    QTest.mouseClick(window.collect_button, Qt.LeftButton)
+    QTest.mouseClick(window.page(PageId.SQL).collect_button, Qt.LeftButton)
     idle(application, window)
-    assert window.result_tabs.count() == 3 and len(first.current_result().rows) == 5
+    assert window.page(PageId.SQL).result_tabs.count() == 3 and len(first.current_result().rows) == 5
     assert tuple(row[0] for row in second.current_result().rows) == expected
-    close = window.result_tabs.tabBar().tabButton(0, QTabBar.RightSide)
+    close = window.page(PageId.SQL).result_tabs.tabBar().tabButton(0, QTabBar.RightSide)
     QTest.mouseClick(close, Qt.LeftButton)
     idle(application, window)
-    assert window.result_tabs.count() == 2
-    assert window.result_tabs.current_pane() is saved
+    assert window.page(PageId.SQL).result_tabs.count() == 2
+    assert window.page(PageId.SQL).result_tabs.current_pane() is saved
     query(application, window, "SELECT * FROM memory.cpu_hot")
-    assert window.result_tabs.tabText(2) == "cpu_hot (2)"
+    assert window.page(PageId.SQL).result_tabs.tabText(2) == "cpu_hot (2)"
 
 
 @pytest.mark.parametrize("format", list(ExportFormat))
@@ -204,9 +214,9 @@ def test_export_active_filtered_order_from_dialog(application, window, tmp_path,
         dialog.path_edit.setText(str(output))
         if format is ExportFormat.CSV:
             dialog.delimiter_edit.setText(";")
-    modal(application, lambda: window.export_result(format), ExportResultDialog, fill)
+    modal(application, lambda: window.page(PageId.SQL).export_result(format), ExportResultDialog, fill)
     idle(application, window)
-    assert output.is_file(), window.log_view.toPlainText()
+    assert output.is_file(), window.log_dialog.log_view.toPlainText()
     if format is ExportFormat.CSV:
         with output.open(encoding="utf-8", newline="") as stream:
             rows = list(csv.reader(stream, delimiter=";"))
@@ -224,19 +234,19 @@ def test_export_active_filtered_order_from_dialog(application, window, tmp_path,
 
 def test_failed_query_and_missing_task_leave_tabs_usable(application, window):
     pane = query(application, window, "SELECT 42 AS answer")
-    window.sql_editor.setPlainText("DELETE FROM missing")
-    QTest.mouseClick(window.query_button, Qt.LeftButton)
+    window.page(PageId.SQL).sql_editor.setPlainText("DELETE FROM missing")
+    QTest.mouseClick(window.page(PageId.SQL).query_button, Qt.LeftButton)
     idle(application, window)
-    assert window.result_tabs.count() == 1 and window.result_tabs.current_pane() is pane
+    assert window.page(PageId.SQL).result_tabs.count() == 1 and window.page(PageId.SQL).result_tabs.current_pane() is pane
     assert window.log_dialog.isVisible()
     window.log_dialog.close()
-    QTest.mouseClick(window.task_button, Qt.LeftButton)
-    assert window.pages.currentIndex() == PAGE_TASKS and "먼저 등록" in window.status_label.text()
-    window.show_page(PAGE_SQL)
-    QTest.mouseClick(window.result_tabs.tabBar().tabButton(0, QTabBar.RightSide), Qt.LeftButton)
+    QTest.mouseClick(window.page(PageId.SQL).task_button, Qt.LeftButton)
+    assert window.pages.currentWidget().widget().SPEC.id == PageId.TASKS and "먼저 등록" in window.log_bar.message_label.text()
+    window.show_page(PageId.SQL)
+    QTest.mouseClick(window.page(PageId.SQL).result_tabs.tabBar().tabButton(0, QTabBar.RightSide), Qt.LeftButton)
     idle(application, window)
-    assert window.result_tabs.count() == 0 and window.result_empty.isVisible()
-    assert not window.share_button.isEnabled() and not window.save_table_button.isEnabled()
+    assert window.page(PageId.SQL).result_tabs.count() == 0 and window.page(PageId.SQL).result_empty.isVisible()
+    assert not window.page(PageId.SQL).share_button.isEnabled() and not window.page(PageId.SQL).save_table_button.isEnabled()
 
 
 def test_task_repository_error_is_reported_without_losing_result(application, window, monkeypatch):
@@ -244,9 +254,9 @@ def test_task_repository_error_is_reported_without_losing_result(application, wi
     def unavailable():
         raise CdwError(ErrorCode.INTERNAL, "task metadata unavailable")
     monkeypatch.setattr(window.task_service, "list_tasks", unavailable)
-    QTest.mouseClick(window.task_button, Qt.LeftButton)
-    assert window.log_dialog.isVisible() and "task metadata unavailable" in window.log_view.toPlainText()
-    assert window.result_tabs.current_pane() is pane and window.query_button.isEnabled()
+    QTest.mouseClick(window.page(PageId.SQL).task_button, Qt.LeftButton)
+    assert window.log_dialog.isVisible() and "task metadata unavailable" in window.log_dialog.log_view.toPlainText()
+    assert window.page(PageId.SQL).result_tabs.current_pane() is pane and window.page(PageId.SQL).query_button.isEnabled()
 
 
 def test_export_invalid_path_and_delimiter_keep_dialog_open(application, window, tmp_path):

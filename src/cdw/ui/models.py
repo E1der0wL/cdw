@@ -6,13 +6,14 @@ from qtpy.QtGui import QColor
 from cdw.domain.contracts import QueryResult
 from cdw.ui.design.manager import ThemeManager
 
-NULL_TEXT = "NULL"
-MAX_CELL_CHARACTERS = 2000
-ELLIPSIS = "…"
-RAW_VALUE_ROLE = Qt.UserRole + 1
-
 
 class ResultTableModel(QAbstractTableModel):
+
+    NULL_TEXT = "NULL"
+    MAX_CELL_CHARACTERS = 2000
+    ELLIPSIS = "…"
+    RAW_VALUE_ROLE = Qt.UserRole + 1
+
     def __init__(self, parent=None, *, theme=None) -> None:
         super().__init__(parent)
         self.result: QueryResult | None = None
@@ -38,11 +39,11 @@ class ResultTableModel(QAbstractTableModel):
         if not index.isValid() or self.result is None:
             return None
         value = self.result.rows[index.row()][index.column()]
-        if role == RAW_VALUE_ROLE:
+        if role == ResultTableModel.RAW_VALUE_ROLE:
             return value
         if role in (Qt.DisplayRole, Qt.ToolTipRole):
-            text = NULL_TEXT if value is None else str(value)
-            return text if len(text) <= MAX_CELL_CHARACTERS else text[:MAX_CELL_CHARACTERS] + ELLIPSIS
+            text = ResultTableModel.NULL_TEXT if value is None else str(value)
+            return text if len(text) <= ResultTableModel.MAX_CELL_CHARACTERS else text[:ResultTableModel.MAX_CELL_CHARACTERS] + ResultTableModel.ELLIPSIS
         if role == Qt.ForegroundRole and value is None:
             return QColor(self.theme.current.colors["muted"])
         if role == Qt.TextAlignmentRole and isinstance(value, (int, float)) and not isinstance(value, bool):

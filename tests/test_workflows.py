@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import pytest
 
-from cdw.application.examples import demo_preset
+from helpers import make_preset
 from cdw.application.service import ApplicationService
 from cdw.config import build_config
 from cdw.domain.contracts import (
@@ -29,7 +29,7 @@ def service(tmp_path):
 
 
 def command(service, program, **changes):
-    preset = replace(demo_preset(service.config), arguments=("-c", program), **changes)
+    preset = replace(make_preset(service.config), arguments=("-c", program), **changes)
     return service.save_preset(preset)
 
 
@@ -41,7 +41,7 @@ def output(service, raw: str, **changes):
 def test_register_collect_query_and_restart(tmp_path, memory):
     config = build_config(tmp_path)
     first = ApplicationService(config)
-    preset = first.save_preset(demo_preset(config, memory=memory))
+    preset = first.save_preset(make_preset(config, memory=memory))
     try:
         assert first.list_presets() == [preset]
         result = first.collect(preset.id)
@@ -191,7 +191,7 @@ def test_sql_is_a_single_select(service, sql):
 
 
 def test_unique_preset_name_and_storage_target(service):
-    preset = service.save_preset(demo_preset(service.config))
+    preset = service.save_preset(make_preset(service.config))
     for duplicate in (replace(preset, id=str(uuid4()), table_name="another"),
                       replace(preset, id=str(uuid4()), name="another")):
         with pytest.raises(CdwError) as error:
@@ -203,7 +203,7 @@ def test_unique_preset_name_and_storage_target(service):
 
 
 def test_preset_serialization_round_trip_and_version(service):
-    preset = demo_preset(service.config)
+    preset = make_preset(service.config)
     encoded = json.loads(json.dumps(preset_to_dict(preset)))
     assert preset_from_dict(encoded) == preset
     encoded["version"] = 999
@@ -233,7 +233,7 @@ def test_profile_lock_releases_without_deleting_file(tmp_path):
     {"table_name": "bad; DROP TABLE x"}, {"encoding": "not-an-encoding"},
 ])
 def test_invalid_preset_json_has_stable_validation_error(service, changes):
-    document = preset_to_dict(demo_preset(service.config))
+    document = preset_to_dict(make_preset(service.config))
     document.update(changes)
     with pytest.raises(CdwError) as error:
         preset_from_dict(document)

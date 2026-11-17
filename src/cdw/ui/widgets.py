@@ -4,34 +4,27 @@ Pages choose semantic roles, not colors, padding or radii. Qt-generated internal
 children (scrollbars, popup views, etc.) receive the same application QSS/palette.
 """
 
-from qtpy.QtCore import QEvent, QRect, QRectF, QSize, Qt, Signal
+from cdw.i18n import tr
+
+from qtpy.QtCore import QAbstractAnimation, QEvent, QRect, QRectF, QSize, Qt, Signal, QVariantAnimation
 from qtpy.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QPen, QRegion, QTransform
 from qtpy.QtWidgets import (
     QAbstractItemView, QColorDialog, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
     QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QSplitter, QSplitterHandle,
     QStackedWidget, QStatusBar, QTableView, QTableWidget, QTabWidget, QTreeWidget,
-    QVBoxLayout, QWidget, QStyle, QStyledItemDelegate, QStyleOptionComboBox, QStyleOptionSpinBox,
+    QVBoxLayout, QWidget, QStyle, QStyledItemDelegate, QStyleOptionButton, QStyleOptionComboBox,
 )
 
 from cdw.ui.design.icons import IconName, IconVariant
 from cdw.ui.design.manager import ThemeManager
-from cdw.ui.design.spec import ButtonVariant, LayoutRole, TextRole, VisualState
+from cdw.ui.design.motion import ContentTransition, QtMotion
+from cdw.ui.design.spec import ButtonVariant, LayoutRole, MotionRole, TextRole, VisualState
 
-APPLICATION_EYEBROW = "LOCAL WORKSPACE"
-BUTTON_TEXT = {QMessageBox.Yes: "예", QMessageBox.No: "아니요", QMessageBox.Ok: "확인", QMessageBox.Cancel: "취소"}
 ICON_EVENTS = frozenset((QEvent.Enter, QEvent.Leave, QEvent.EnabledChange, QEvent.FocusIn, QEvent.FocusOut))
 TABLE_MINIMUM_ROWS = 4
-EDITOR_MINIMUM_LINES = 4
-COMBO_MINIMUM_CHARACTERS = 12
-COMBO_ICON_ROLE = Qt.UserRole + 1
-SIDEBAR_TEXT = {True: "사이드바 펼치기", False: "사이드바 접기"}
-SIDEBAR_ICON_ROTATIONS = {True: -90, False: 90}
 CONTENT_HORIZONTAL_ALIGNMENT = Qt.AlignLeft
 CONTENT_ALIGNMENT = CONTENT_HORIZONTAL_ALIGNMENT | Qt.AlignVCenter
-COLOR_PICKER_ACTION = "선택"
-TAB_BAR_GEOMETRY_EVENTS = frozenset((QEvent.Paint, QEvent.Resize, QEvent.Move,
-                                    QEvent.LayoutRequest, QEvent.Show, QEvent.Hide))
 
 
 class StyledWidgetMixin:
@@ -43,6 +36,11 @@ class StyledWidgetMixin:
         self.setProperty("cdwManaged", True)
         self.theme.changed.connect(self.apply_style)
         self.apply_style(self.theme.current)
+
+    def _install_window_chrome(self, *, dialog=False):
+        from cdw.ui.window_chrome import install_window_chrome
+
+        self.window_chrome = install_window_chrome(self, self.theme, dialog=dialog)
 
     def apply_style(self, style):
         self.setFont(self.theme.font(self.TEXT_ROLE, style))
@@ -87,6 +85,7 @@ class CdwMainWindow(StyledWidgetMixin, QMainWindow):
         self.resize(style.metric("window_width"), style.metric("window_height"))
         self.setMinimumSize(style.metric("minimum_width"), style.metric("minimum_height"))
         self.setStatusBar(CdwStatusBar(self, theme=self.theme))
+        self._install_window_chrome()
 
 
 class CdwDialog(StyledWidgetMixin, QDialog):
@@ -95,6 +94,7 @@ class CdwDialog(StyledWidgetMixin, QDialog):
         self._bind_theme(theme)
         style = self.theme.current
         self.resize(style.metric("dialog_width"), style.metric("dialog_height"))
+        self._install_window_chrome(dialog=True)
 
 
 class CdwLabel(StyledWidgetMixin, QLabel):
@@ -156,6 +156,9 @@ class CdwButton(StyledWidgetMixin, QPushButton):
         self.icon_rotation = rotation
         self._refresh_icon()
 
+    def square_extent(self, style):
+        return max(self.minimumHeight(), self.iconSize().height() + 2 * style.metric("border"))
+
     def event(self, event):
         result = super().event(event)
         if event.type() in ICON_EVENTS and hasattr(self, "theme"):
@@ -163,19 +166,83 @@ class CdwButton(StyledWidgetMixin, QPushButton):
         return result
 
 
+class CdwIconButton(CdwButton):
+    """A square icon-only control using the shared font and control metrics."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setProperty("cdwCompact", True)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def apply_style(self, style):
+        super().apply_style(style)
+        extent = self.square_extent(style)
+        self.setFixedSize(extent, extent)
+
+
 class CdwNavigationButton(CdwButton):
+    MAXIMUM_WIDGET_SIZE = 16777215
+
     def __init__(self, text, parent=None, *, icon, theme=None):
         self.label_text = text
+        self._compact = False
         super().__init__(text, parent, variant=ButtonVariant.NAVIGATION, icon=icon, theme=theme)
         self.setAccessibleName(text)
 
     def set_compact(self, compact):
+        self._compact = bool(compact)
         self.setText("" if compact else self.label_text)
         self.setToolTip(self.label_text if compact else "")
         self.setProperty("cdwCompact", compact)
         self.style().unpolish(self)
         self.style().polish(self)
-        self.updateGeometry()
+        self.apply_style(self.theme.current)
+
+    def apply_style(self, style):
+        self.setMaximumSize(self.MAXIMUM_WIDGET_SIZE, self.MAXIMUM_WIDGET_SIZE)
+        self.setMinimumWidth(0)
+        super().apply_style(style)
+        extent = self.square_extent(style)
+        self.setFixedHeight(extent)
+        if self._compact:
+            self.setFixedWidth(extent)
+
+    def _label_offset(self, style):
+        return self.square_extent(style) + style.metric("gap_small")
+
+    def expanded_size_hint(self):
+        style = self.theme.current
+        width = self._label_offset(style) + self.fontMetrics().horizontalAdvance(self.label_text) + style.metric("padding_x")
+        return QSize(width, self.square_extent(style))
+
+    def sizeHint(self):
+        if not hasattr(self, "theme"):
+            return super().sizeHint()
+        hint = self.expanded_size_hint()
+        return QSize(hint.height(), hint.height()) if self._compact else hint
+
+    def paintEvent(self, event):
+        # Native label placement changes when text disappears. Own one leading
+        # icon column while leaving the common QSS in charge of the surface.
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        option.text = ""
+        option.icon = type(option.icon)()
+        painter = QPainter(self)
+        self.style().drawControl(QStyle.CE_PushButton, option, painter, self)
+        extent = self.square_extent(self.theme.current)
+        icon_rect = QRect(0, 0, self.iconSize().width(), self.iconSize().height())
+        icon_rect.moveCenter(QRect(0, 0, extent, self.height()).center())
+        self.icon().paint(painter, icon_rect)
+        if not self._compact:
+            style = self.theme.current
+            start = self._label_offset(style)
+            area = self.rect().adjusted(start, 0, -style.metric("padding_x"), 0)
+            painter.setPen(QColor(style.button_colors(self.variant, self.visual_state)[1]))
+            label = self.fontMetrics().elidedText(self.label_text, Qt.ElideRight, max(0, area.width()))
+            painter.drawText(area, CONTENT_ALIGNMENT, label)
+        painter.end()
 
 
 class CdwFieldActionButton(CdwButton):
@@ -218,13 +285,16 @@ class CdwActionLineEdit(CdwLineEdit):
 class CdwColorEdit(CdwActionLineEdit):
     """An optional HEX override with an integrated, themed color picker."""
 
+    COLOR_PICKER_ACTION = tr('common.choose')
+
+
     colorCommitted = Signal(str)
 
     def __init__(self, title, parent=None, *, theme=None):
-        super().__init__(parent=parent, action_text=COLOR_PICKER_ACTION, action_icon=IconName.EDIT, theme=theme)
+        super().__init__(parent=parent, action_text=CdwColorEdit.COLOR_PICKER_ACTION, action_icon=IconName.EDIT, theme=theme)
         self._title = title
         self.setAccessibleName(title)
-        self.action_button.setAccessibleName(f"{title} {COLOR_PICKER_ACTION}")
+        self.action_button.setAccessibleName(f"{title} {CdwColorEdit.COLOR_PICKER_ACTION}")
         self.editingFinished.connect(lambda: self.colorCommitted.emit(self.text()))
         self.action_button.clicked.connect(self._choose_color)
 
@@ -241,12 +311,16 @@ class CdwColorEdit(CdwActionLineEdit):
 
 
 class CdwComboBox(StyledWidgetMixin, QComboBox):
+
+    COMBO_MINIMUM_CHARACTERS = 12
+    COMBO_ICON_ROLE = Qt.UserRole + 1
+
     CONTROL = True
 
     def __init__(self, *args, theme=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-        self.setMinimumContentsLength(COMBO_MINIMUM_CHARACTERS)
+        self.setMinimumContentsLength(CdwComboBox.COMBO_MINIMUM_CHARACTERS)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setItemDelegate(QStyledItemDelegate(self))
         self.currentTextChanged.connect(self.setToolTip)
@@ -256,11 +330,11 @@ class CdwComboBox(StyledWidgetMixin, QComboBox):
         name = IconName(icon)
         index = self.count()
         self.addItem(text, user_data)
-        self.setItemData(index, name.value, COMBO_ICON_ROLE)
+        self.setItemData(index, name.value, CdwComboBox.COMBO_ICON_ROLE)
         self._refresh_item_icon(index, self.theme.current)
 
     def _refresh_item_icon(self, index, style):
-        name = self.itemData(index, COMBO_ICON_ROLE)
+        name = self.itemData(index, CdwComboBox.COMBO_ICON_ROLE)
         if name is not None:
             color = style.colors["text" if self.isEnabled() else "disabled_text"]
             self.setItemIcon(index, self.theme.icons.icon(name, color))
@@ -303,37 +377,25 @@ class CdwComboBox(StyledWidgetMixin, QComboBox):
 
 class CdwDoubleSpinBox(StyledWidgetMixin, QDoubleSpinBox):
     CONTROL = True
-    STEP_ICONS = ((QStyle.SC_SpinBoxUp, QDoubleSpinBox.StepUpEnabled, 180),
-                  (QStyle.SC_SpinBoxDown, QDoubleSpinBox.StepDownEnabled, 0))
 
     def __init__(self, *args, theme=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.setKeyboardTracking(False)
         self.setAlignment(CONTENT_ALIGNMENT)
         self._bind_theme(theme)
+        from cdw.ui.design.spin_controls import install_spin_control_style
+
+        install_spin_control_style(self, self.theme)
 
     def apply_style(self, style):
         super().apply_style(style)
         self.lineEdit().setFont(self.font())
 
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        option = QStyleOptionSpinBox()
-        self.initStyleOption(option)
-        painter = QPainter(self)
-        for control, flag, rotation in self.STEP_ICONS:
-            area = self.style().subControlRect(QStyle.CC_SpinBox, option, control, self)
-            if not self.isEnabled() or not self.stepEnabled() & flag:
-                state = VisualState.DISABLED
-            elif option.activeSubControls & control:
-                state = VisualState.HOVER
-            else:
-                state = VisualState.NORMAL
-            _paint_field_icon(painter, self, area, state, metric="spin_icon", rotation=rotation)
-        painter.end()
-
 
 class CdwPlainTextEdit(StyledWidgetMixin, QPlainTextEdit):
+
+    EDITOR_MINIMUM_LINES = 4
+
     def __init__(self, *args, theme=None, code=False, compact=False, role=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.TEXT_ROLE = TextRole(role) if role is not None else TextRole.CODE if code else TextRole.BODY
@@ -343,7 +405,7 @@ class CdwPlainTextEdit(StyledWidgetMixin, QPlainTextEdit):
 
     def apply_style(self, style):
         super().apply_style(style)
-        height = max(style.metric(self._height_metric), QFontMetrics(self.font()).lineSpacing() * EDITOR_MINIMUM_LINES)
+        height = max(style.metric(self._height_metric), QFontMetrics(self.font()).lineSpacing() * CdwPlainTextEdit.EDITOR_MINIMUM_LINES)
         if self._compact:
             self.setFixedHeight(height)
         else:
@@ -363,6 +425,10 @@ class CdwCard(StyledWidgetMixin, QFrame):
 
 
 class CdwSidebar(CdwWidget):
+
+    SIDEBAR_TEXT = {True: tr('sidebar.expand'), False: tr('sidebar.collapse')}
+    SIDEBAR_ICON_ROTATIONS = {True: -90, False: 90}
+
     collapsedChanged = Signal(bool)
 
     def __init__(self, *args, **kwargs):
@@ -370,11 +436,15 @@ class CdwSidebar(CdwWidget):
         self._expanded_width = None
         self._navigation = []
         self._expanded_widgets = []
+        self._transitioning = False
+        self._canvas_width = None
+        self._navigation_layout = None
         super().__init__(*args, surface="panel", **kwargs)
-        self.toggle_button = CdwButton("", self, variant=ButtonVariant.NAVIGATION,
+        self.content_widget = CdwWidget(self, surface="panel", theme=self.theme)
+        self._layout_content()
+        self.toggle_button = CdwIconButton("", self, variant=ButtonVariant.NAVIGATION,
                                        icon=IconName.CHEVRON_DOWN, theme=self.theme)
         self.toggle_button.setObjectName("sidebar_toggle")
-        self.toggle_button.setProperty("cdwCompact", True)
         self.toggle_button.setCheckable(False)
         self.toggle_button.clicked.connect(lambda: self.set_collapsed(not self.collapsed))
         self._update_toggle()
@@ -386,52 +456,119 @@ class CdwSidebar(CdwWidget):
     def register_navigation(self, button):
         self._navigation.append(button)
         button.set_compact(self.collapsed)
+        self._align_navigation()
+
+    def register_title(self, title):
+        self.register_expanded_widget(title.heading)
+        self.register_expanded_widget(title.description)
+        self._apply_presentation()
+
+    def register_navigation_layout(self, layout):
+        self._navigation_layout = layout
+        self._apply_presentation()
 
     def register_expanded_widget(self, widget):
         self._expanded_widgets.append(widget)
+        policy = widget.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        widget.setSizePolicy(policy)
         widget.setVisible(not self.collapsed)
 
     def set_collapsed(self, collapsed):
         if self._collapsed == bool(collapsed):
             return
         self._collapsed = bool(collapsed)
-        for button in self._navigation:
-            button.set_compact(self.collapsed)
-        for widget in self._expanded_widgets:
-            widget.setVisible(not self.collapsed)
+        self._transitioning = self.isVisible()
+        self._apply_presentation()
         self._update_toggle()
-        self.apply_style(self.theme.current)
+        self._apply_width_limits(self.theme.current)
         self.collapsedChanged.emit(self.collapsed)
 
+    def finish_transition(self):
+        self._transitioning = False
+        self._apply_presentation()
+        self._apply_width_limits(self.theme.current)
+
+    def _apply_presentation(self):
+        compact = self.collapsed or self._transitioning
+        for button in self._navigation:
+            button.set_compact(compact)
+        for widget in self._expanded_widgets:
+            widget.setVisible(not compact)
+        self._align_navigation()
+
+    def _align_navigation(self):
+        if self._navigation_layout is not None:
+            alignment = Qt.AlignLeft if self.collapsed or self._transitioning else Qt.Alignment()
+            for button in self._navigation:
+                self._navigation_layout.setAlignment(button, alignment)
+
     def _update_toggle(self):
-        self.toggle_button.setToolTip(SIDEBAR_TEXT[self.collapsed])
-        self.toggle_button.setAccessibleName(SIDEBAR_TEXT[self.collapsed])
-        self.toggle_button.set_icon_rotation(SIDEBAR_ICON_ROTATIONS[self.collapsed])
+        self.toggle_button.setToolTip(CdwSidebar.SIDEBAR_TEXT[self.collapsed])
+        self.toggle_button.setAccessibleName(CdwSidebar.SIDEBAR_TEXT[self.collapsed])
+        self.toggle_button.set_icon_rotation(CdwSidebar.SIDEBAR_ICON_ROTATIONS[self.collapsed])
 
     def remember_expanded_width(self, width):
-        if not self.collapsed:
+        if not self.collapsed and not self._transitioning:
             self._expanded_width = width / self.theme.preferences.ui_scale
 
     def preferred_width(self):
         style = self.theme.current
         if self.collapsed:
-            return style.metric("sidebar_collapsed_width")
+            return self._collapsed_width(style)
+        return self._preferred_expanded_width(style)
+
+    def _preferred_expanded_width(self, style):
         width = style.metric("sidebar_width") if self._expanded_width is None else round(self._expanded_width * style.preferences.ui_scale)
-        return max(self.minimumWidth(), min(self.maximumWidth(), width))
+        minimum, maximum = self._expanded_limits(style)
+        return max(minimum, min(maximum, width))
+
+    def _collapsed_width(self, style):
+        controls = [*self._navigation]
+        if hasattr(self, "toggle_button"):
+            controls.append(self.toggle_button)
+        extent = max((button.minimumHeight() for button in controls), default=style.metric("control_height"))
+        margins, _ = style.layout(LayoutRole.SIDEBAR)
+        return extent + margins[0] + margins[2]
 
     def apply_style(self, style):
         super().apply_style(style)
-        if self.collapsed:
-            self.setFixedWidth(style.metric("sidebar_collapsed_width"))
-            return
+        self._transitioning = False
+        self._apply_presentation()
+        self._apply_width_limits(style)
+        self._canvas_width = self._preferred_expanded_width(style)
+        self._layout_content()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self.collapsed and not self._transitioning:
+            self._canvas_width = self.width()
+        self._layout_content()
+
+    def _layout_content(self):
+        if hasattr(self, "content_widget"):
+            width = self._canvas_width or self._preferred_expanded_width(self.theme.current)
+            self.content_widget.setGeometry(0, 0, width, self.height())
+
+    def _apply_width_limits(self, style):
+        minimum, maximum = self._expanded_limits(style)
+        compact_width = self._collapsed_width(style)
+        if self._transitioning:
+            self.setMinimumWidth(compact_width)
+            self.setMaximumWidth(max(maximum, compact_width))
+        elif self.collapsed:
+            self.setFixedWidth(compact_width)
+        else:
+            self.setMinimumWidth(minimum)
+            self.setMaximumWidth(maximum)
+
+    def _expanded_limits(self, style):
         # Font changes can require more width than geometric scaling alone.
-        metrics = QFontMetrics(self.theme.font(style=style))
-        longest = max((metrics.horizontalAdvance(button.label_text) + style.metric("nav_icon") for button in self._navigation), default=0)
-        margins, spacing = style.layout(LayoutRole.SIDEBAR)
-        content_width = longest + margins[0] + margins[2] + 2 * (style.metric("padding_x") + style.metric("border")) + spacing
+        longest = max((button.expanded_size_hint().width() for button in self._navigation), default=0)
+        margins, _ = style.layout(LayoutRole.SIDEBAR)
+        content_width = longest + margins[0] + margins[2]
         minimum = max(style.metric("sidebar_min_width"), content_width)
-        self.setMinimumWidth(minimum)
-        self.setMaximumWidth(max(minimum, style.metric("sidebar_max_width")))
+        return minimum, max(minimum, style.metric("sidebar_max_width"))
 
 
 class CdwScrollArea(StyledWidgetMixin, QScrollArea):
@@ -446,10 +583,15 @@ class CdwStackedWidget(StyledWidgetMixin, QStackedWidget):
     def __init__(self, *args, theme=None, **kwargs):
         super().__init__(*args, **kwargs)
         self._bind_theme(theme)
+        self.transition = ContentTransition(self, self.theme, MotionRole.PAGE)
 
 
 class CdwTabWidget(StyledWidgetMixin, QTabWidget):
     """One rounded frame encloses both the native tab bar and its pages."""
+
+    TAB_BAR_GEOMETRY_EVENTS = frozenset((QEvent.Paint, QEvent.Resize, QEvent.Move,
+                                        QEvent.LayoutRequest, QEvent.Show, QEvent.Hide))
+
 
     def __init__(self, *args, theme=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -457,6 +599,8 @@ class CdwTabWidget(StyledWidgetMixin, QTabWidget):
         self.tabBar().setDrawBase(False)
         self._bind_theme(theme)
         self.tabBar().installEventFilter(self)
+        stack = self.findChild(QStackedWidget, options=Qt.FindDirectChildrenOnly)
+        self.transition = ContentTransition(stack, self.theme, MotionRole.TAB)
 
     def apply_style(self, style):
         super().apply_style(style)
@@ -490,7 +634,7 @@ class CdwTabWidget(StyledWidgetMixin, QTabWidget):
         return line, active
 
     def eventFilter(self, watched, event):
-        if watched is self.tabBar() and event.type() in TAB_BAR_GEOMETRY_EVENTS:
+        if watched is self.tabBar() and event.type() in CdwTabWidget.TAB_BAR_GEOMETRY_EVENTS:
             # Scrolling and dragging can move tabs without moving the bar. Only
             # repaint when geometry changes, avoiding a parent/child paint loop.
             if self._tab_separator_geometry() != self._separator_geometry:
@@ -651,13 +795,17 @@ class CdwSidebarSplitter(CdwSplitter):
     def __init__(self, sidebar, pages, parent=None, *, theme=None):
         self.sidebar = sidebar
         self._restoring = False
+        self._width_animation = None
         super().__init__(Qt.Horizontal, parent, theme=theme)
         self.addWidget(sidebar)
         self.addWidget(pages)
         self.setStretchFactor(0, 0)
         self.setStretchFactor(1, 1)
+        self._width_animation = QVariantAnimation(self)
+        self._width_animation.valueChanged.connect(self._apply_animated_width)
+        self._width_animation.finished.connect(self.restore_sidebar_width)
         self.splitterMoved.connect(self._remember_width)
-        sidebar.collapsedChanged.connect(self.restore_sidebar_width)
+        sidebar.collapsedChanged.connect(self._animate_sidebar)
         self.theme.changed.connect(self.restore_sidebar_width)
         self.restore_sidebar_width()
 
@@ -665,14 +813,47 @@ class CdwSidebarSplitter(CdwSplitter):
         return CdwSidebarSplitterHandle(self.orientation(), self, theme=getattr(self, "theme", None))
 
     def _remember_width(self, *_):
-        if not self._restoring:
+        if not self._restoring and not self.motion_running:
             self.sidebar.remember_expanded_width(self.sizes()[0])
+
+    @property
+    def motion_running(self):
+        return self._width_animation is not None and self._width_animation.state() == QAbstractAnimation.Running
+
+    def _animate_sidebar(self, *_):
+        self._width_animation.stop()
+        rule = self.theme.current.motion(MotionRole.SIDEBAR)
+        start = self.sizes()[0]
+        target = self.sidebar.preferred_width()
+        if not self.isVisible() or rule.duration_ms <= 0 or start == target:
+            self.restore_sidebar_width()
+            return
+        self.handle(1).setEnabled(False)
+        self.handle(1).setCursor(Qt.ArrowCursor)
+        self._width_animation.setDuration(rule.duration_ms)
+        self._width_animation.setEasingCurve(QtMotion.easing_curve(rule.easing))
+        self._width_animation.setStartValue(float(start))
+        self._width_animation.setEndValue(float(target))
+        self._width_animation.start()
+
+    def _apply_animated_width(self, value):
+        if self._restoring:
+            return
+        self._restoring = True
+        try:
+            width = round(value)
+            self.setSizes([width, max(0, self.width() - self.handleWidth() - width)])
+        finally:
+            self._restoring = False
 
     def restore_sidebar_width(self, *_):
         if self.count() < 2 or self._restoring:
             return
         self._restoring = True
         try:
+            if self._width_animation is not None:
+                self._width_animation.stop()
+            self.sidebar.finish_transition()
             width = self.sidebar.preferred_width()
             self.setSizes([width, max(0, self.width() - self.handleWidth() - width)])
             self.handle(1).setEnabled(not self.sidebar.collapsed)
@@ -683,6 +864,10 @@ class CdwSidebarSplitter(CdwSplitter):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.restore_sidebar_width()
+
+    def hideEvent(self, event):
+        self.restore_sidebar_width()
+        super().hideEvent(event)
 
 
 class TableStyleMixin(StyledWidgetMixin):
@@ -791,6 +976,10 @@ class CdwLogBar(CdwStatusBar):
 
 
 class StyledLayoutMixin:
+    def set_role(self, role):
+        self.role = LayoutRole(role)
+        self.apply_style(self.theme.current)
+
     def _bind_layout(self, role, theme=None):
         self.role = LayoutRole(role)
         self.theme = theme or ThemeManager.current_manager()
@@ -805,8 +994,11 @@ class StyledLayoutMixin:
 
 
 class CdwVBoxLayout(StyledLayoutMixin, QVBoxLayout):
-    def __init__(self, *args, role=LayoutRole.ROW, theme=None):
+    def __init__(self, *args, role=LayoutRole.CONTENT, theme=None):
         super().__init__(*args)
+        # Keep compact content at its natural height. Expanding children and
+        # explicit stretches still consume the available height through Qt.
+        self.setAlignment(Qt.AlignTop)
         self._bind_layout(role, theme)
 
 
@@ -904,18 +1096,15 @@ class CdwTitleArea(CdwWidget):
         self.content.addWidget(self.description)
 
 
-class CdwPage(CdwWidget):
-    def __init__(self, title, subtitle, parent=None, *, theme=None):
-        super().__init__(parent, theme=theme, surface="window")
-        self.content = CdwVBoxLayout(self, role=LayoutRole.PAGE, theme=self.theme)
-        self.title_area = CdwTitleArea(title, subtitle, eyebrow=APPLICATION_EYEBROW, theme=self.theme)
-        self.content.addWidget(self.title_area)
-
-
 class CdwDialogButtonBox(StyledWidgetMixin, QDialogButtonBox):
     def __init__(self, parent=None, *, theme=None):
         super().__init__(parent)
         self._bind_theme(theme)
+
+    def apply_style(self, style):
+        super().apply_style(style)
+        # Qt owns the button-box layout, while CDW owns its action-row gap.
+        self.layout().setSpacing(style.layout(LayoutRole.ROW)[1])
 
     def add_action(self, text, role, *, icon=None, primary=False):
         button = CdwButton(text, icon=icon, variant=ButtonVariant.PRIMARY if primary else ButtonVariant.SECONDARY, theme=self.theme)
@@ -924,17 +1113,21 @@ class CdwDialogButtonBox(StyledWidgetMixin, QDialogButtonBox):
 
 
 class CdwMessageBox(StyledWidgetMixin, QMessageBox):
+
+    BUTTON_TEXT = {QMessageBox.Yes: tr('common.yes'), QMessageBox.No: tr('common.no'), QMessageBox.Ok: tr('common.ok'), QMessageBox.Cancel: tr('common.cancel')}
+
     def __init__(self, *args, theme=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.setTextFormat(Qt.PlainText)
         self._bind_theme(theme)
+        self._install_window_chrome(dialog=True)
 
     @classmethod
     def warning(cls, parent, title, text):
         box = cls(parent)
         box.setWindowTitle(title)
         box.setText(text)
-        button = CdwButton(BUTTON_TEXT[QMessageBox.Ok], icon=IconName.CHECK, theme=box.theme)
+        button = CdwButton(CdwMessageBox.BUTTON_TEXT[QMessageBox.Ok], icon=IconName.CHECK, theme=box.theme)
         box.addButton(button, QMessageBox.AcceptRole)
         box.exec()
 
@@ -943,8 +1136,8 @@ class CdwMessageBox(StyledWidgetMixin, QMessageBox):
         box = cls(parent)
         box.setWindowTitle(title)
         box.setText(text)
-        yes = CdwButton(BUTTON_TEXT[QMessageBox.Yes], icon=IconName.CHECK, theme=box.theme)
-        no = CdwButton(BUTTON_TEXT[QMessageBox.No], icon=IconName.CLOSE, theme=box.theme)
+        yes = CdwButton(CdwMessageBox.BUTTON_TEXT[QMessageBox.Yes], icon=IconName.CHECK, theme=box.theme)
+        no = CdwButton(CdwMessageBox.BUTTON_TEXT[QMessageBox.No], icon=IconName.CLOSE, theme=box.theme)
         box.addButton(yes, QMessageBox.YesRole)
         box.addButton(no, QMessageBox.NoRole)
         box.setDefaultButton(no)
@@ -963,6 +1156,10 @@ class CdwColorDialog(StyledWidgetMixin, QColorDialog):
         super().__init__(color, parent)
         self.setOption(QColorDialog.DontUseNativeDialog, True)
         self._bind_theme(theme)
+        self._install_window_chrome(dialog=True)
+        from cdw.ui.design.spin_controls import install_native_spin_controls
+
+        install_native_spin_controls(self, self.theme)
 
 
 class CdwFileDialog(StyledWidgetMixin, QFileDialog):
@@ -970,6 +1167,7 @@ class CdwFileDialog(StyledWidgetMixin, QFileDialog):
         super().__init__(*args, **kwargs)
         self.setOption(QFileDialog.DontUseNativeDialog, True)
         self._bind_theme(theme)
+        self._install_window_chrome(dialog=True)
 
     @classmethod
     def getSaveFileName(cls, parent=None, caption="", directory="", filter=""):

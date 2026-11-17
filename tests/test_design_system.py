@@ -14,17 +14,19 @@ from qtpy.QtGui import QColor, QFontDatabase, QFontMetrics, QHelpEvent, QPalette
 from qtpy.QtTest import QTest
 from qtpy.QtWidgets import QApplication, QDialogButtonBox, QLineEdit, QToolTip
 
-from cdw.application.examples import demo_preset
+from helpers import make_preset, stop_server
 from cdw.application.service import ApplicationService
+from cdw.server.client import RemoteApplicationService
 from cdw.config import build_config
 from cdw.domain.appearance import AppearanceSettings, ColorOverrides, ThemeMode
 from cdw.domain.contracts import CdwError
 from cdw.ui.design.icons import IconName, IconProvider, IconVariant, svg_source
 from cdw.ui.design.manager import ThemeManager
 from cdw.ui.design.spec import ButtonVariant, LayoutRole, MetricMode, MetricRule, TextRole, resolve_style
-from cdw.ui.main_window import MainWindow, PAGE_SETTINGS, PAGE_SQL
+from cdw.ui.main_window import MainWindow
+from cdw.ui.pages.base import PageId
 from cdw.ui.preset_dialog import PresetDialog
-from cdw.ui.settings_page import DesignPreviewDialog
+from cdw.ui.design.preview import DesignPreviewDialog
 from cdw.ui.widgets import CdwButton, CdwCard, CdwColorDialog, CdwComboBox, CdwLabel, CdwLineEdit, CdwVBoxLayout
 
 
@@ -46,15 +48,33 @@ def wait_idle(app, window):
     app.processEvents()
 
 
+def wait_motion(app, window):
+    deadline = time.monotonic() + 3
+    while (window.shell_splitter.motion_running or window.pages.transition.running) and time.monotonic() < deadline:
+        app.processEvents()
+        QTest.qWait(5)
+    app.processEvents()
+    assert not window.shell_splitter.motion_running
+    assert not window.pages.transition.running
+
+
 @pytest.fixture
 def window(application, tmp_path):
-    window = MainWindow(ApplicationService(build_config(tmp_path)))
-    window.show()
-    wait_idle(application, window)
-    yield window
-    wait_idle(application, window)
-    window.close()
-    application.processEvents()
+    config = build_config(tmp_path)
+    window = None
+    try:
+        window = MainWindow(RemoteApplicationService(config))
+        window.show()
+        wait_idle(application, window)
+        yield window
+    finally:
+        try:
+            if window is not None:
+                wait_idle(application, window)
+                window.close()
+                application.processEvents()
+        finally:
+            stop_server(config)
 
 
 def capture(app, widget, name):
@@ -66,12 +86,12 @@ def capture(app, widget, name):
 
 
 def test_settings_change_existing_and_new_widgets_and_survive_restart(application, window):
-    window.show_page(PAGE_SETTINGS)
-    page = window.settings_page
+    window.show_page(PageId.SETTINGS)
+    page = window.page(PageId.SETTINGS)
     # Open a real preset form before changing the global appearance.
     dialog = PresetDialog(window.service, parent=window)
     dialog.show()
-    initial_icon = window.nav_buttons[PAGE_SQL].icon().cacheKey()
+    initial_icon = window.nav_buttons[PageId.SQL].icon().cacheKey()
     initial_spacing = dialog.layout().spacing()
     page.mode_combo.setCurrentIndex(page.mode_combo.findData(ThemeMode.DARK.value))
     commit_color(application, page, "accent", "#c0a2f4")
@@ -85,15 +105,15 @@ def test_settings_change_existing_and_new_widgets_and_survive_restart(applicatio
     assert window.theme.preferences == expected
     assert window.service.load_appearance() == expected
     assert dialog.name_edit.font().pointSizeF() == 15
-    assert window.sql_editor.font().pointSizeF() == 18
-    assert window.sql_editor.document().defaultFont().pointSizeF() == 18
+    assert window.page(PageId.SQL).sql_editor.font().pointSizeF() == 18
+    assert window.page(PageId.SQL).sql_editor.document().defaultFont().pointSizeF() == 18
     assert dialog.name_edit.font().family() == family
     assert page.font_size_spin.lineEdit().font().pointSizeF() == 15
     assert page.scale_spin.lineEdit().font().pointSizeF() == 15
     assert dialog.tabs.tabBar().font().pointSizeF() == 15
     assert dialog.name_edit.minimumHeight() > QFontMetrics(dialog.name_edit.font()).height()
     assert dialog.layout().spacing() > initial_spacing
-    assert window.nav_buttons[PAGE_SQL].icon().cacheKey() != initial_icon
+    assert window.nav_buttons[PageId.SQL].icon().cacheKey() != initial_icon
     fresh = CdwLineEdit()
     assert fresh.font() == dialog.name_edit.font()
     fresh.deleteLater()
@@ -101,19 +121,19 @@ def test_settings_change_existing_and_new_widgets_and_survive_restart(applicatio
     capture(application, window, "settings-dark-violet-125")
     saved_config = window.service.config
     window.close()
-    reopened = MainWindow(ApplicationService(saved_config))
+    reopened = MainWindow(RemoteApplicationService(saved_config))
     try:
         wait_idle(application, reopened)
         assert reopened.theme.preferences == expected
-        assert reopened.settings_page.scale_spin.value() == 125
-        assert reopened.settings_page.mode_combo.currentData() == ThemeMode.DARK.value
+        assert reopened.page(PageId.SETTINGS).scale_spin.value() == 125
+        assert reopened.page(PageId.SETTINGS).mode_combo.currentData() == ThemeMode.DARK.value
     finally:
         reopened.close()
 
 
 def test_reset_and_hidden_internal_rules(application, window):
-    window.show_page(PAGE_SETTINGS)
-    page = window.settings_page
+    window.show_page(PageId.SETTINGS)
+    page = window.page(PageId.SETTINGS)
     page.mode_combo.setCurrentIndex(page.mode_combo.findData(ThemeMode.DARK.value))
     page.scale_spin.setValue(150)
     QTest.mouseClick(page.reset_button, Qt.LeftButton)
@@ -134,8 +154,8 @@ def test_reset_and_hidden_internal_rules(application, window):
 
 
 def test_dropdown_arrow_opens_selectable_options(application, window):
-    window.show_page(PAGE_SETTINGS)
-    combo = window.settings_page.mode_combo
+    window.show_page(PageId.SETTINGS)
+    combo = window.page(PageId.SETTINGS).mode_combo
     application.processEvents()
     QTest.mouseClick(combo, Qt.LeftButton, pos=QPoint(combo.width() - 12, combo.height() // 2))
     application.processEvents()
@@ -176,15 +196,15 @@ def commit_color(application, page, name, value):
 
 
 def test_custom_colors_apply_globally_and_survive_mode_switch_and_restart(application, window):
-    window.show_page(PAGE_SQL)
-    window.sql_editor.setPlainText("SELECT 1 AS value")
-    QTest.mouseClick(window.query_button, Qt.LeftButton)
+    window.show_page(PageId.SQL)
+    window.page(PageId.SQL).sql_editor.setPlainText("SELECT 1 AS value")
+    QTest.mouseClick(window.page(PageId.SQL).query_button, Qt.LeftButton)
     wait_idle(application, window)
-    window.show_page(PAGE_SETTINGS)
-    page = window.settings_page
+    window.show_page(PageId.SETTINGS)
+    page = window.page(PageId.SETTINGS)
     page.mode_combo.setCurrentIndex(page.mode_combo.findData(ThemeMode.DARK.value))
     dialog = PresetDialog(window.service, parent=window)
-    original_icon = window.collect_button.icon().cacheKey()
+    original_icon = window.page(PageId.SQL).collect_button.icon().cacheKey()
     expected = ColorOverrides(accent="#ef946c", background="#30363b", foreground="#eeeeee", secondary_background="#454b50")
     for name, value in (("accent", "#EF946C"), ("background", "#30363B"),
                         ("secondary_background", "#454B50"), ("foreground", "#EEEEEE")):
@@ -195,17 +215,17 @@ def test_custom_colors_apply_globally_and_survive_mode_switch_and_restart(applic
     assert window.sidebar.palette().color(QPalette.Window).name() == "#141719"
     assert window.log_bar.palette().color(QPalette.Window).name() == "#202020"
     assert dialog.name_edit.palette().color(QPalette.Base).name() == expected.background
-    assert window.sql_editor.palette().color(QPalette.Base).name() == expected.secondary_background
-    assert window.result_tabs.current_pane().view.palette().color(QPalette.AlternateBase).name() == expected.secondary_background
-    assert window.result_tabs.current_pane().view.palette().color(QPalette.Text).name() == expected.foreground
+    assert window.page(PageId.SQL).sql_editor.palette().color(QPalette.Base).name() == expected.secondary_background
+    assert window.page(PageId.SQL).result_tabs.current_pane().view.palette().color(QPalette.AlternateBase).name() == expected.secondary_background
+    assert window.page(PageId.SQL).result_tabs.current_pane().view.palette().color(QPalette.Text).name() == expected.foreground
     # Collection is disabled until a preset exists; disabled controls keep the base surface.
-    assert not window.collect_button.isEnabled()
-    assert window.collect_button.palette().color(QPalette.Button).name() == expected.background
+    assert not window.page(PageId.SQL).collect_button.isEnabled()
+    assert window.page(PageId.SQL).collect_button.palette().color(QPalette.Button).name() == expected.background
     primary = CdwButton("실행", variant=ButtonVariant.PRIMARY)
     primary.ensurePolished()
     assert primary.palette().color(QPalette.Button).name() == expected.accent
     primary.deleteLater()
-    assert window.collect_button.icon().cacheKey() != original_icon
+    assert window.page(PageId.SQL).collect_button.icon().cacheKey() != original_icon
     fresh = CdwLineEdit()
     assert fresh.palette().color(QPalette.Base).name() == expected.background
     fresh.deleteLater()
@@ -221,21 +241,21 @@ def test_custom_colors_apply_globally_and_survive_mode_switch_and_restart(applic
     saved = window.theme.preferences
     config = window.service.config
     window.close()
-    reopened = MainWindow(ApplicationService(config))
+    reopened = MainWindow(RemoteApplicationService(config))
     try:
         wait_idle(application, reopened)
         assert reopened.theme.preferences == saved
         assert saved.light_colors.background == "#fffdf5"
         assert reopened.theme.current.colors["surface"] == expected.background
-        assert reopened.settings_page.color_edits["foreground"].text() == expected.foreground
-        assert reopened.settings_page.color_edits["secondary_background"].text() == expected.secondary_background
+        assert reopened.page(PageId.SETTINGS).color_edits["foreground"].text() == expected.foreground
+        assert reopened.page(PageId.SETTINGS).color_edits["secondary_background"].text() == expected.secondary_background
     finally:
         reopened.close()
 
 
 def test_color_validation_and_default_preserve_other_choices(application, window):
-    window.show_page(PAGE_SETTINGS)
-    page = window.settings_page
+    window.show_page(PageId.SETTINGS)
+    page = window.page(PageId.SETTINGS)
     commit_color(application, page, "background", "#fffdf5")
     before = window.theme.preferences
     commit_color(application, page, "background", "not-a-color")
@@ -252,8 +272,8 @@ def test_color_validation_and_default_preserve_other_choices(application, window
 
 
 def test_color_picker_accepts_and_cancel_preserves_saved_color(application, window):
-    window.show_page(PAGE_SETTINGS)
-    field = window.settings_page.color_edits["accent"]
+    window.show_page(PageId.SETTINGS)
+    field = window.page(PageId.SETTINGS).color_edits["accent"]
     failures = []
 
     def choose(accept):
@@ -278,8 +298,8 @@ def test_color_picker_accepts_and_cancel_preserves_saved_color(application, wind
 
 
 def test_spin_buttons_and_compact_log_bar_follow_font_settings(application, window):
-    window.show_page(PAGE_SETTINGS)
-    page = window.settings_page
+    window.show_page(PageId.SETTINGS)
+    page = window.page(PageId.SETTINGS)
     application.processEvents()
     for spin in (page.font_size_spin, page.scale_spin):
         before = spin.value()
@@ -313,20 +333,20 @@ def test_sidebar_collapses_keeps_navigation_and_shows_names_on_hover(application
     width = window.sidebar.width()
     labels = {index: button.text() for index, button in window.nav_buttons.items()}
     QTest.mouseClick(window.sidebar.toggle_button, Qt.LeftButton)
-    application.processEvents()
+    wait_motion(application, window)
     assert window.sidebar.collapsed
     assert window.sidebar.width() < width
     for index, button in window.nav_buttons.items():
         assert button.text() == ""
         assert button.toolTip() == labels[index]
         assert not button.icon().isNull()
-    button = window.nav_buttons[PAGE_SETTINGS]
+    button = window.nav_buttons[PageId.SETTINGS]
     QTest.mouseClick(button, Qt.LeftButton)
-    assert window.pages.currentIndex() == PAGE_SETTINGS
+    assert window.pages.currentWidget().widget().SPEC.id == PageId.SETTINGS
     center = button.rect().center()
     application.sendEvent(button, QHelpEvent(QEvent.ToolTip, center, button.mapToGlobal(center)))
     application.processEvents()
-    assert QToolTip.text() == labels[PAGE_SETTINGS]
+    assert QToolTip.text() == labels[PageId.SETTINGS]
     for popup in QApplication.topLevelWidgets():
         if popup.isVisible() and popup.windowType() == Qt.ToolTip:
             assert popup.windowFlags() & Qt.NoDropShadowWindowHint
@@ -338,33 +358,33 @@ def test_sidebar_collapses_keeps_navigation_and_shows_names_on_hover(application
     assert window.sidebar.collapsed
     assert all(not button.text() for button in window.nav_buttons.values())
     QTest.mouseClick(window.sidebar.toggle_button, Qt.LeftButton)
-    application.processEvents()
+    wait_motion(application, window)
     assert not window.sidebar.collapsed
     assert {index: button.text() for index, button in window.nav_buttons.items()} == labels
-    assert window.nav_buttons[PAGE_SETTINGS].isChecked()
+    assert window.nav_buttons[PageId.SETTINGS].isChecked()
 
 
 def test_theme_change_during_collection_keeps_data_and_editor(application, window):
-    preset = replace(demo_preset(window.service.config), arguments=("-c", "import time; time.sleep(0.3); print('[{\"value\":17}]')"))
+    preset = replace(make_preset(window.service.config), arguments=("-c", "import time; time.sleep(0.3); print('[{\"value\":17}]')"))
     window.service.save_preset(preset)
-    window.refresh_presets(preset.id)
+    window.page(PageId.SQL).refresh_presets(preset.id)
     wait_idle(application, window)
-    window.show_page(PAGE_SQL)
+    window.show_page(PageId.SQL)
     sql = "SELECT value FROM source.host_inventory"
-    window.sql_editor.setPlainText(sql)
-    window.collect()
+    window.page(PageId.SQL).sql_editor.setPlainText(sql)
+    window.page(PageId.SQL).collect()
     window.theme.set_preferences(AppearanceSettings(mode=ThemeMode.DARK).with_active_colors(accent="#85b4ff"))
     wait_idle(application, window)
-    assert window.sql_editor.toPlainText() == sql
-    window.run_query()
+    assert window.page(PageId.SQL).sql_editor.toPlainText() == sql
+    window.page(PageId.SQL).run_query()
     wait_idle(application, window)
-    assert window.result_tabs.current_pane().current_result().rows == ((17,),)
-    assert "1행 저장" in window.log_view.toPlainText()
+    assert window.page(PageId.SQL).result_tabs.current_pane().current_result().rows == ((17,),)
+    assert "1행 저장" in window.log_dialog.log_view.toPlainText()
     capture(application, window, "workspace-dark-blue")
 
 
 def test_sidebar_drag_width_survives_collapse_and_font_scaling(application, window):
-    window.show_page(PAGE_SETTINGS)
+    window.show_page(PageId.SETTINGS)
     application.processEvents()
     initial = window.sidebar.width()
     handle = window.shell_splitter.handle(1)
@@ -377,10 +397,10 @@ def test_sidebar_drag_width_survives_collapse_and_font_scaling(application, wind
     assert resized > initial
     assert window.sidebar.minimumWidth() <= resized <= window.sidebar.maximumWidth()
     QTest.mouseClick(window.sidebar.toggle_button, Qt.LeftButton)
-    application.processEvents()
+    wait_motion(application, window)
     assert window.sidebar.width() < initial
     QTest.mouseClick(window.sidebar.toggle_button, Qt.LeftButton)
-    application.processEvents()
+    wait_motion(application, window)
     assert abs(window.sidebar.width() - resized) <= 1
     window.resize(window.width() + 100, window.height())
     application.processEvents()
@@ -420,11 +440,11 @@ def test_widget_gallery_dark_and_scaled_layout_remain_accessible(application, wi
     capture(application, preview, "gallery-dark-blue")
     preview.close()
     window.theme.set_preferences(AppearanceSettings(mode=ThemeMode.DARK, font_size=20, ui_scale=1.5))
-    window.show_page(PAGE_SETTINGS)
+    window.show_page(PageId.SETTINGS)
     application.processEvents()
     scroll = window.pages.currentWidget()
     assert scroll.verticalScrollBar().maximum() > 0
-    for field in window.settings_page.findChildren(QLineEdit):
+    for field in window.page(PageId.SETTINGS).findChildren(QLineEdit):
         # Spin-box internal editors are sized by Qt, other inputs by CDW.
         if isinstance(field, CdwLineEdit):
             assert field.height() >= QFontMetrics(field.font()).height()
@@ -476,11 +496,11 @@ def test_failed_save_preserves_running_theme(application):
     assert manager.current is before
 
 
-@pytest.mark.parametrize("version", [0, 1, 3])
+@pytest.mark.parametrize("version", [0, 1, 999])
 def test_unsupported_metadata_is_rejected_without_migration(tmp_path, version):
     config = build_config(tmp_path)
     service = ApplicationService(config)
-    preset = service.save_preset(demo_preset(config))
+    preset = service.save_preset(make_preset(config))
     service.close()
     with sqlite3.connect(config.metadata_database) as connection:
         connection.execute(f"PRAGMA user_version={version}")
@@ -497,8 +517,10 @@ def test_page_code_uses_cdw_widget_and_layout_subclasses():
     directory = Path(__file__).parents[1] / "src" / "cdw" / "ui"
     forbidden = {"QWidget", "QPushButton", "QLabel", "QLineEdit", "QComboBox", "QVBoxLayout", "QHBoxLayout",
                  "QFormLayout", "QDialog", "QMainWindow", "QPlainTextEdit", "QTableView", "QTableWidget", "QFrame"}
-    for filename in ("main_window.py", "preset_dialog.py", "settings_page.py", "log_dialog.py",
-                     "result_tabs.py", "result_actions.py", "tasks_page.py", "task_dialog.py"):
-        tree = ast.parse((directory / filename).read_text(encoding="utf-8"))
+    for path in directory.rglob("*.py"):
+        if path.name == "widgets.py":
+            continue
+        filename = str(path.relative_to(directory))
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         calls = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
         assert not calls & forbidden, filename

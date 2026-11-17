@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from cdw.i18n import tr
+
 import argparse
 import json
 import sys
@@ -10,14 +12,12 @@ from pathlib import Path
 
 from cdw import __version__
 from cdw.branding import APP_NAME
-from cdw.application.examples import demo_preset
-from cdw.application.service import ApplicationService
-from cdw.config import PROFILE_LOCK_NAME, build_config
+from cdw.config import build_config
 from cdw.domain.contracts import CdwError, ErrorCode
-from cdw.domain.serialization import preset_from_dict, preset_to_dict
-from cdw.infrastructure.profile_lock import ProfileLock
+from cdw.domain.serialization import preset_from_dict, preset_to_dict, query_to_dict
+from cdw.server.client import RemoteApplicationService, ServerClient
 
-CLI_DESCRIPTION = f"{APP_NAME} headless interface · JSON output"
+CLI_DESCRIPTION = tr('cli.description').format(app_name=APP_NAME)
 ENCODING = "utf-8"
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -37,40 +37,39 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-dir", type=Path)
     parser.add_argument("--version", action="version", version=__version__)
     subcommands = parser.add_subparsers(dest="command")
-    subcommands.add_parser("presets", help="프리셋 목록")
-    register = subcommands.add_parser("register", help="버전 1 JSON 프리셋 등록/수정")
+    subcommands.add_parser("presets", help=tr('cli.main'))
+    register = subcommands.add_parser("register", help=tr('cli.main.register'))
     register.add_argument("path", type=Path)
-    demo = subcommands.add_parser("demo", help="데모 프리셋 등록")
-    demo.add_argument("--memory", action="store_true")
-    collect = subcommands.add_parser("collect", help="명령어 실행 및 저장")
+    server = subcommands.add_parser("server", help=tr("cli.server.help"))
+    server.add_argument("action", choices=("start", "status", "stop"))
+    collect = subcommands.add_parser("collect", help=tr('cli.main.collect'))
     collect.add_argument("preset_id")
-    query = subcommands.add_parser("query", help="SELECT SQL 조회")
+    query = subcommands.add_parser("query", help=tr('cli.main.query'))
     query.add_argument("preset_id")
     query.add_argument("--sql", required=True)
-    subcommands.add_parser("history", help="최근 실행 이력")
+    subcommands.add_parser("history", help=tr('cli.main_2'))
     args = parser.parse_args(argv)
     if args.command is None:
         from cdw.__main__ import run_gui
         return run_gui(args.data_dir)
     config = build_config(args.data_dir)
-    lock = ProfileLock(config.data_directory / PROFILE_LOCK_NAME)
     service = None
     try:
-        lock.acquire()
-        service = ApplicationService(config)
-        service.recover()
+        if args.command == "server":
+            client = ServerClient(config)
+            emit(getattr(client, args.action)())
+            return EXIT_OK
+        service = RemoteApplicationService(config)
         match args.command:
             case "presets":
                 emit([preset_to_dict(preset, include_environment=False) for preset in service.list_presets()])
             case "register":
                 preset = preset_from_dict(json.loads(args.path.read_text(encoding=ENCODING)))
                 emit(preset_to_dict(service.save_preset(preset), include_environment=False))
-            case "demo":
-                emit(preset_to_dict(service.save_preset(demo_preset(config, memory=args.memory))))
             case "collect":
                 emit(asdict(service.collect(args.preset_id)))
             case "query":
-                emit(asdict(service.query(args.preset_id, args.sql)))
+                emit(query_to_dict(service.query(args.preset_id, args.sql)))
             case "history":
                 emit([asdict(run) for run in service.list_runs()])
         return EXIT_OK
@@ -85,7 +84,6 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if service:
             service.close()
-        lock.close()
 
 
 if __name__ == "__main__":

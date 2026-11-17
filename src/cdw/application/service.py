@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from cdw.i18n import tr
+
 import threading
 import time
 from datetime import datetime, timezone
@@ -9,23 +11,16 @@ from uuid import uuid4
 
 from cdw.config import AppConfig, DEFAULT_HISTORY_LIMIT
 from cdw.domain.contracts import (
-    CdwError, CollectionResult, ErrorCode, MEMORY_STORAGE_KEY, Preset, Progress,
+    CdwError, CollectionPreview, CollectionResult, ErrorCode, MEMORY_STORAGE_KEY, Preset, Progress,
     QueryResult, RunRecord, RunState, StorageMode, StorageTarget, TableInfo,
 )
 from cdw.infrastructure.duckdb_store import DuckDBStore
 from cdw.infrastructure.metadata import MetadataRepository
+from cdw.infrastructure.metadata_database import MetadataDatabase
 from cdw.infrastructure.parsers import OutputParser
 from cdw.infrastructure.runner import SubprocessRunner
 from cdw.domain.appearance import AppearanceSettings
 from cdw.domain.workspace import DEFAULT_EXPORT_DELIMITER, QuerySnapshot, WorkspaceTable
-
-STAGE_MESSAGES = {
-    RunState.RUNNING: "명령어를 실행하고 있습니다.",
-    RunState.PARSING: "출력을 표로 변환하고 있습니다.",
-    RunState.SAVING: "DuckDB에 저장하고 있습니다.",
-}
-RECOVERED_MESSAGE = "이전 실행의 DB 저장 완료 기록을 확인해 복구했습니다."
-INTERRUPTED_MESSAGE = "이전 프로세스가 실행 완료 전에 종료되었습니다."
 
 
 def utc_now() -> str:
@@ -39,12 +34,42 @@ class ApplicationService:
     short-lived connections; DuckDB calls must stay on one thread.
     """
 
-    def __init__(self, config: AppConfig) -> None:
+    STAGE_MESSAGES = {
+        RunState.RUNNING: tr('application.service.stage_messages'),
+        RunState.PARSING: tr('application.service.stage_messages_2'),
+        RunState.SAVING: tr('application.service.stage_messages_3'),
+    }
+    RECOVERED_MESSAGE = tr('application.service.recovered_message')
+    INTERRUPTED_MESSAGE = tr('application.service.interrupted_message')
+    COLLECTION_SQL = "SELECT * FROM {table}"
+
+
+    def __init__(self, config: AppConfig, *, store=None) -> None:
         self.config = config
-        self.metadata = MetadataRepository(config.metadata_database)
+        self.database = MetadataDatabase(config.metadata_database)
+        self.metadata = MetadataRepository(self.database)
         self._runner = SubprocessRunner()
         self._parser = OutputParser()
-        self._store = DuckDBStore()
+        self._store = store if store is not None else DuckDBStore()
+
+    def preview(self, preset: Preset, cancel: threading.Event | None = None) -> CollectionPreview:
+        """Execute the supplied definition and parse it without changing storage."""
+        cancellation = cancel if cancel is not None else threading.Event()
+        started = time.monotonic()
+        output = self._runner.run(preset.command, cancellation, allow_nonzero=True)
+        stdout = output.stdout.decode(preset.encoding, errors="replace")
+        stderr = output.stderr.decode(preset.encoding, errors="replace")
+        if output.return_code:
+            return CollectionPreview(stdout, stderr, (), (), (), 0, time.monotonic() - started,
+                                     tr("collection.preview_exit").format(code=output.return_code))
+        try:
+            frame = self._parser.parse(output.stdout, preset)
+        except CdwError as error:
+            return CollectionPreview(stdout, stderr, (), (), (), 0, time.monotonic() - started,
+                                     f"{error}\n{error.details}".strip())
+        return CollectionPreview(stdout, stderr, tuple(frame.columns), tuple(str(dtype) for dtype in frame.dtypes),
+                                 tuple(frame.head(self.config.query_policy.preview_rows).iter_rows()), frame.height,
+                                 time.monotonic() - started)
 
     def save_preset(self, preset: Preset) -> Preset:
         self.metadata.save_preset(preset)
@@ -75,12 +100,16 @@ class ApplicationService:
             self.metadata.finish_run(
                 run.id, RunState.SUCCEEDED if commit else RunState.INTERRUPTED, utc_now(),
                 rows=commit[0] if commit else None, elapsed=None,
-                details=RECOVERED_MESSAGE if commit else INTERRUPTED_MESSAGE,
+                details=ApplicationService.RECOVERED_MESSAGE if commit else ApplicationService.INTERRUPTED_MESSAGE,
             )
 
     def collect(self, preset_id: str, cancel: threading.Event | None = None,
                 on_progress: Callable[[Progress], None] | None = None) -> CollectionResult:
-        preset = self.get_preset(preset_id)
+        return self.collect_definition(self.get_preset(preset_id), cancel, on_progress)
+
+    def collect_definition(self, preset: Preset, cancel: threading.Event | None = None,
+                           on_progress: Callable[[Progress], None] | None = None) -> CollectionResult:
+        """Run one captured definition even if the saved preset is edited later."""
         cancellation = cancel if cancel is not None else threading.Event()
         run_id = str(uuid4())
         started = time.monotonic()
@@ -92,11 +121,11 @@ class ApplicationService:
                 raise CdwError(ErrorCode.CANCELLED)
             self.metadata.set_stage(run_id, state)
             if on_progress:
-                on_progress(Progress(run_id, state, STAGE_MESSAGES[state]))
+                on_progress(Progress(run_id, state, ApplicationService.STAGE_MESSAGES[state]))
 
         try:
             stage(RunState.RUNNING)
-            output = self._runner.run(preset, cancellation)
+            output = self._runner.run(preset.command, cancellation)
             stderr = output.stderr.decode(preset.encoding, errors="replace")
             stage(RunState.PARSING)
             frame = self._parser.parse(output.stdout, preset)
@@ -117,9 +146,10 @@ class ApplicationService:
                                      elapsed=time.monotonic() - started,
                                      error_code=ErrorCode.INTERNAL.value, details=str(exc), stderr=stderr)
             raise CdwError(ErrorCode.INTERNAL, str(exc)) from exc
-        self.metadata.finish_run(run_id, RunState.SUCCEEDED, utc_now(), rows=inserted,
+        finished_at = utc_now()
+        self.metadata.finish_run(run_id, RunState.SUCCEEDED, finished_at, rows=inserted,
                                  elapsed=elapsed, stderr=stderr)
-        return CollectionResult(run_id, inserted, total, elapsed, stderr)
+        return CollectionResult(run_id, inserted, total, elapsed, stderr, finished_at)
 
     def query(self, preset_id: str, sql: str, cancel: threading.Event | None = None) -> QueryResult:
         return self._store.query(self.get_preset(preset_id).storage, sql, self.config.query_policy, cancel)
@@ -130,6 +160,10 @@ class ApplicationService:
     def query_workspace(self, preset_id: str | None, sql: str, cancel: threading.Event | None = None) -> QuerySnapshot:
         target = self.get_preset(preset_id).storage if preset_id else None
         return self._store.query_workspace(target, sql, self.list_presets(), cancel)
+
+    def collection_snapshot(self, preset: Preset, cancel: threading.Event | None = None) -> QuerySnapshot:
+        """Read the exact target used by a completed collection."""
+        return self._store.query_workspace(preset.storage, self.COLLECTION_SQL.format(table=preset.qualified_table), [preset], cancel)
 
     def workspace_tables(self) -> list[WorkspaceTable]:
         presets = self.list_presets()
@@ -158,8 +192,8 @@ class ApplicationService:
     def release_result(self, snapshot_id: str) -> None:
         self._store.release_result(snapshot_id)
 
-    def interrupt_query(self) -> None:
-        self._store.interrupt()
+    def interrupt_query(self, cancel: threading.Event | None = None) -> None:
+        self._store.interrupt(cancel)
 
     def close(self) -> None:
         self._store.close()

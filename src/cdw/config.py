@@ -15,8 +15,6 @@ BYTES_PER_MIB = 1024 * 1024
 DEFAULT_PREVIEW_ROWS = 500
 DEFAULT_ENCODING = "utf-8"
 DEFAULT_CSV_DELIMITER = ","
-DEFAULT_DATABASE_NAME = "data.duckdb"
-METADATA_DATABASE_NAME = "metadata.sqlite"
 PROFILE_LOCK_NAME = "session.lock"
 DEFAULT_HISTORY_LIMIT = 200
 ENV_DATA_DIRECTORY = "CDW_DATA_DIR"
@@ -25,17 +23,21 @@ DATA_DIRECTORY_NAME = "cdw"
 
 @dataclass(frozen=True)
 class AppConfig:
+
+    DEFAULT_DATABASE_NAME = "data.duckdb"
+    METADATA_DATABASE_NAME = "metadata.sqlite"
+
     data_directory: Path
     execution_policy: ExecutionPolicy
     query_policy: QueryPolicy
 
     @property
     def default_database(self) -> Path:
-        return self.data_directory / DEFAULT_DATABASE_NAME
+        return self.data_directory / AppConfig.DEFAULT_DATABASE_NAME
 
     @property
     def metadata_database(self) -> Path:
-        return self.data_directory / METADATA_DATABASE_NAME
+        return self.data_directory / AppConfig.METADATA_DATABASE_NAME
 
 
 def default_data_directory() -> Path:

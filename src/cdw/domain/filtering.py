@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from cdw.i18n import tr
+
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -10,23 +12,19 @@ import math
 import re
 from typing import Any, Callable
 
-NUMBER_TYPES = frozenset(("TINYINT", "SMALLINT", "INTEGER", "INT", "BIGINT", "HUGEINT", "UTINYINT",
-                          "USMALLINT", "UINTEGER", "UBIGINT", "UHUGEINT", "DECIMAL", "NUMERIC",
-                          "FLOAT", "DOUBLE", "REAL"))
-TEXT_TYPES = frozenset(("VARCHAR", "CHAR", "TEXT", "STRING", "UUID", "ENUM"))
 TRUE_VALUES = frozenset(("true", "1"))
 FALSE_VALUES = frozenset(("false", "0"))
 NULL_LABEL = "(NULL)"
-EMPTY_LABEL = "(빈 문자열)"
+EMPTY_LABEL = tr('domain.filtering.empty_label')
 ERRORS = {
-    "number": "숫자 조건에는 유한한 숫자를 입력해 주세요.",
-    "date": "날짜는 YYYY-MM-DD 형식으로 입력해 주세요.",
-    "datetime": "날짜·시간은 YYYY-MM-DD 또는 YYYY-MM-DD HH:MM:SS 형식으로 입력해 주세요.",
-    "time": "시각은 HH:MM 또는 HH:MM:SS 형식으로 입력해 주세요. 소수 초와 시간대도 사용할 수 있습니다.",
-    "boolean": "논리값은 true 또는 false로 입력해 주세요.",
-    "range": "범위의 시작 값은 끝 값보다 클 수 없습니다.",
-    "regex": "정규 표현식을 확인해 주세요: {details}",
-    "operator": "이 열의 자료형에서 사용할 수 없는 조건입니다.",
+    "number": tr('domain.filtering.errors.number'),
+    "date": tr('domain.filtering.errors.date'),
+    "datetime": tr('domain.filtering.errors.datetime'),
+    "time": tr('domain.filtering.errors.time'),
+    "boolean": tr('domain.filtering.errors.boolean'),
+    "range": tr('domain.filtering.errors.range'),
+    "regex": tr('domain.filtering.errors.regex'),
+    "operator": tr('domain.filtering.errors.operator'),
 }
 
 ValueKey = tuple[str, str]
@@ -67,18 +65,6 @@ TEXT_OPERATORS = (FilterOperator.CONTAINS, FilterOperator.STARTS_WITH, FilterOpe
                   FilterOperator.REGEX, FilterOperator.IS_EMPTY)
 NULL_OPERATORS = (FilterOperator.IS_NULL, FilterOperator.NOT_NULL)
 OPERAND_FREE_OPERATORS = frozenset((FilterOperator.ANY, *NULL_OPERATORS, FilterOperator.IS_EMPTY))
-TYPE_KINDS = {
-    **dict.fromkeys(NUMBER_TYPES, ColumnKind.NUMBER),
-    **dict.fromkeys(TEXT_TYPES, ColumnKind.TEXT),
-    "DATE": ColumnKind.DATE,
-    "TIMESTAMP": ColumnKind.DATETIME, "TIMESTAMPTZ": ColumnKind.DATETIME,
-    "TIMESTAMP_S": ColumnKind.DATETIME, "TIMESTAMP_MS": ColumnKind.DATETIME,
-    "TIMESTAMP_NS": ColumnKind.DATETIME, "TIMESTAMP WITH TIME ZONE": ColumnKind.DATETIME,
-    "TIMESTAMP WITHOUT TIME ZONE": ColumnKind.DATETIME, "DATETIME": ColumnKind.DATETIME,
-    "TIME": ColumnKind.TIME, "TIMETZ": ColumnKind.TIME,
-    "TIME WITH TIME ZONE": ColumnKind.TIME, "TIME WITHOUT TIME ZONE": ColumnKind.TIME,
-    "BOOLEAN": ColumnKind.BOOLEAN, "BOOL": ColumnKind.BOOLEAN,
-}
 KIND_OPERATORS = {
     **dict.fromkeys((ColumnKind.NUMBER, ColumnKind.DATE, ColumnKind.DATETIME, ColumnKind.TIME),
                     BASE_OPERATORS + RANGE_OPERATORS + NULL_OPERATORS),
@@ -113,15 +99,6 @@ class FilterValue:
     value: Any
     label: str
     count: int
-
-
-def column_kind(type_name: str) -> ColumnKind:
-    name = type_name.upper().strip()
-    # DECIMAL(10, 2)[] and TIMESTAMP[] are collections, not scalar columns.
-    if name.endswith("]"):
-        return ColumnKind.OTHER
-    token = name.split("(", 1)[0].strip()
-    return TYPE_KINDS.get(token, ColumnKind.OTHER)
 
 
 def operators_for(kind: ColumnKind) -> tuple[FilterOperator, ...]:

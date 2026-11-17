@@ -1,3 +1,4 @@
+from cdw.i18n import tr
 """Heroicons boundary: semantic names, recoloring, caching and DPI-aware SVGs."""
 
 from enum import StrEnum
@@ -10,10 +11,7 @@ from qtpy.QtGui import QColor, QIcon, QIconEngine, QPainter, QPixmap
 from qtpy.QtSvg import QSvgRenderer
 
 ASSET_DIRECTORY = "assets/heroicons"
-SOURCE_COLOR = b"currentColor"
 ASSET_CACHE_SIZE = 128
-ICON_CACHE_SIZE = 256
-INVALID_SVG = "Invalid bundled Heroicon: {name}"
 
 
 class IconName(StrEnum):
@@ -32,6 +30,9 @@ class IconName(StrEnum):
     EDIT = "pencil-square"
     DELETE = "trash"
     CLOSE = "x-mark"
+    MINIMIZE = "minus"
+    MAXIMIZE = "arrows-pointing-out"
+    RESTORE = "square-2-stack"
     FOLDER = "folder-open"
     DOCUMENT = "document-text"
     REFRESH = "arrow-path"
@@ -56,13 +57,16 @@ def svg_source(name: IconName, variant: IconVariant) -> bytes:
 
 
 class SvgIconEngine(QIconEngine):
+
+    INVALID_SVG = tr('icons.invalid_asset')
+
     def __init__(self, data: bytes, rotation: int = 0) -> None:
         super().__init__()
         self._data = data
         self._rotation = rotation
         self._renderer = QSvgRenderer(QByteArray(data))
         if not self._renderer.isValid():
-            raise ValueError(INVALID_SVG.format(name="SVG"))
+            raise ValueError(SvgIconEngine.INVALID_SVG.format(name="SVG"))
 
     def clone(self):
         return SvgIconEngine(self._data, self._rotation)
@@ -95,6 +99,10 @@ class SvgIconEngine(QIconEngine):
 class IconProvider:
     """GUI-thread service. Qt requests fresh vector renders at each display DPI."""
 
+    SOURCE_COLOR = b"currentColor"
+    ICON_CACHE_SIZE = 256
+
+
     def __init__(self):
         self._cache: dict[tuple, QIcon] = {}
 
@@ -102,13 +110,13 @@ class IconProvider:
         name, variant = IconName(name), IconVariant(variant)
         parsed_color = QColor(color)
         if not parsed_color.isValid():
-            raise ValueError(f"Invalid icon color: {color}")
+            raise ValueError(tr('icons.invalid_color').format(color=color))
         normalized = parsed_color.name()
         key = name, normalized, variant, rotation % 360
         if key not in self._cache:
-            if len(self._cache) >= ICON_CACHE_SIZE:
+            if len(self._cache) >= IconProvider.ICON_CACHE_SIZE:
                 self._cache.clear()
-            data = svg_source(name, variant).replace(SOURCE_COLOR, normalized.encode("ascii"))
+            data = svg_source(name, variant).replace(IconProvider.SOURCE_COLOR, normalized.encode("ascii"))
             self._cache[key] = QIcon(SvgIconEngine(data, rotation))
         return QIcon(self._cache[key])
 

@@ -1,5 +1,7 @@
 """One immutable query snapshot and independent table view per result tab."""
 
+from cdw.i18n import tr
+
 from qtpy.QtCore import Signal
 from qtpy.QtWidgets import QTabBar
 
@@ -7,10 +9,6 @@ from cdw.ui.design.icons import IconName
 from cdw.ui.design.spec import ButtonVariant
 from cdw.ui.result_table import ResultTablePane
 from cdw.ui.widgets import CdwButton, CdwTabWidget, TABLE_MINIMUM_ROWS
-
-UNTITLED_RESULT = "조회 결과"
-DUPLICATE_TITLE = "{title} ({number})"
-CLOSE_TEXT = "결과 탭 닫기"
 
 
 class ResultTab(ResultTablePane):
@@ -21,10 +19,13 @@ class ResultTab(ResultTablePane):
 
 
 class ResultCloseButton(CdwButton):
+
+    CLOSE_TEXT = tr('ui.result_tabs.close_text')
+
     def __init__(self, parent=None, *, theme=None):
         super().__init__("", parent, icon=IconName.CLOSE, variant=ButtonVariant.FIELD_ACTION, theme=theme)
-        self.setToolTip(CLOSE_TEXT)
-        self.setAccessibleName(CLOSE_TEXT)
+        self.setToolTip(ResultCloseButton.CLOSE_TEXT)
+        self.setAccessibleName(ResultCloseButton.CLOSE_TEXT)
 
     def apply_style(self, style):
         super().apply_style(style)
@@ -33,6 +34,10 @@ class ResultCloseButton(CdwButton):
 
 
 class QueryResultsTabs(CdwTabWidget):
+
+    UNTITLED_RESULT = tr('ui.pages.sql.text.result_section')
+    DUPLICATE_TITLE = "{title} ({number})"
+
     closeRequested = Signal(int)
 
     def __init__(self, *args, theme=None, **kwargs):
@@ -46,10 +51,10 @@ class QueryResultsTabs(CdwTabWidget):
         self.setMinimumHeight(style.metric("table_row") * TABLE_MINIMUM_ROWS + style.metric("control_height"))
 
     def add_snapshot(self, snapshot):
-        title = snapshot.title or UNTITLED_RESULT
+        title = snapshot.title or QueryResultsTabs.UNTITLED_RESULT
         number = self._title_counts.get(title, 0) + 1
         self._title_counts[title] = number
-        label = title if number == 1 else DUPLICATE_TITLE.format(title=title, number=number)
+        label = title if number == 1 else QueryResultsTabs.DUPLICATE_TITLE.format(title=title, number=number)
         pane = ResultTab(snapshot, theme=self.theme)
         index = self.addTab(pane, label)
         close = ResultCloseButton(theme=self.theme)

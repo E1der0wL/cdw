@@ -16,6 +16,7 @@ NAMES = (
     "command-line", "table-cells", "play", "stop", "plus", "pencil-square", "trash", "x-mark",
     "folder-open", "document-text", "arrow-path", "arrow-uturn-left", "sun", "moon",
     "check", "check-circle", "exclamation-triangle", "information-circle", "chevron-down",
+    "minus", "arrows-pointing-out", "square-2-stack",
 )
 TIMEOUT_SECONDS = 60
 USER_AGENT = "CDW-asset-vendor/1.0"

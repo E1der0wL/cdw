@@ -16,7 +16,7 @@ from uuid import uuid4
 import duckdb
 import pytest
 
-from cdw.application.examples import demo_preset
+from helpers import make_preset
 from cdw.application.service import ApplicationService
 from cdw.config import build_config
 from cdw.domain.contracts import CdwError, ErrorCode, StorageMode, StorageTarget
@@ -30,7 +30,7 @@ def service(tmp_path):
 
 
 def collected(service, *, memory=False, name=None, database=None, payload='[{"id":1}]'):
-    preset = replace(demo_preset(service.config, memory=memory), id=str(uuid4()), name=name or str(uuid4()),
+    preset = replace(make_preset(service.config, memory=memory), id=str(uuid4()), name=name or str(uuid4()),
                      arguments=("-c", f"print({payload!r})"))
     if database:
         preset = replace(preset, storage=StorageTarget(StorageMode.FILE, str(database)))
@@ -151,8 +151,8 @@ def test_catalog_discovers_existing_non_source_tables_and_skips_missing_files(se
     existing = tmp_path / "existing.duckdb"
     with duckdb.connect(str(existing)) as database:
         database.execute('CREATE TABLE "odd name" AS SELECT 7 AS value')
-    preset = service.save_preset(replace(demo_preset(service.config), name="Existing", storage=StorageTarget(StorageMode.FILE, str(existing))))
-    service.save_preset(replace(demo_preset(service.config), id=str(uuid4()), name="Missing", storage=StorageTarget(StorageMode.FILE, str(tmp_path / "missing.duckdb"))))
+    preset = service.save_preset(replace(make_preset(service.config), name="Existing", storage=StorageTarget(StorageMode.FILE, str(existing))))
+    service.save_preset(replace(make_preset(service.config), id=str(uuid4()), name="Missing", storage=StorageTarget(StorageMode.FILE, str(tmp_path / "missing.duckdb"))))
     entries = service.workspace_tables()
     assert len(entries) == 1
     assert entries[0].name.endswith('.main."odd name"')

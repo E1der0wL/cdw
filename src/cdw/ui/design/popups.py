@@ -5,24 +5,26 @@ from qtpy.QtGui import QPainter, QPalette
 from qtpy.QtWidgets import QComboBox, QFrame, QGraphicsDropShadowEffect, QWidget
 
 POPUP_FILTER_ATTRIBUTE = "_cdw_popup_style_filter"
-POPUP_WINDOW_TYPES = frozenset((Qt.Popup, Qt.ToolTip))
-POPUP_WINDOW_HINTS = Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
-POPUP_SURFACE_PROPERTY = "cdwSurface"
-POPUP_SURFACE = "popup"
-POPUP_EVENTS = frozenset((QEvent.Polish, QEvent.Paint))
 
 
 class PopupStyleFilter(QObject):
+
+    POPUP_WINDOW_TYPES = frozenset((Qt.Popup, Qt.ToolTip))
+    POPUP_WINDOW_HINTS = Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint
+    POPUP_SURFACE_PROPERTY = "cdwSurface"
+    POPUP_SURFACE = "popup"
+    POPUP_EVENTS = frozenset((QEvent.Polish, QEvent.Paint))
+
     def eventFilter(self, watched, event):
-        if (event.type() not in POPUP_EVENTS or not isinstance(watched, QWidget)
-                or not watched.isWindow() or watched.windowType() not in POPUP_WINDOW_TYPES):
+        if (event.type() not in PopupStyleFilter.POPUP_EVENTS or not isinstance(watched, QWidget)
+                or not watched.isWindow() or watched.windowType() not in PopupStyleFilter.POPUP_WINDOW_TYPES):
             return super().eventFilter(watched, event)
         # Polish runs before the first show. Changing window flags in Show can
         # hide the popup and break the opening click or keyboard focus.
         if event.type() == QEvent.Polish:
-            watched.setProperty(POPUP_SURFACE_PROPERTY, POPUP_SURFACE)
+            watched.setProperty(PopupStyleFilter.POPUP_SURFACE_PROPERTY, PopupStyleFilter.POPUP_SURFACE)
             watched.setAttribute(Qt.WA_StyledBackground, True)
-            watched.setWindowFlags(watched.windowFlags() | POPUP_WINDOW_HINTS)
+            watched.setWindowFlags(watched.windowFlags() | PopupStyleFilter.POPUP_WINDOW_HINTS)
             if isinstance(watched, QFrame):
                 watched.setFrameShape(QFrame.NoFrame)
             if isinstance(watched.graphicsEffect(), QGraphicsDropShadowEffect):

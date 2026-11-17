@@ -30,7 +30,8 @@ def test_only_current_package_and_launch_commands_are_available():
     assert importlib.util.find_spec("cdb") is None
     root = Path(__file__).parents[1]
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    assert project["project"]["scripts"] == {"cdw": "cdw.cli:main", "cdw-gui": "cdw.__main__:main"}
+    assert project["project"]["scripts"] == {
+        "cdw": "cdw.cli:main", "cdw-gui": "cdw.__main__:main", "cdw-server": "cdw.server.__main__:main"}
     for module in ("cdw", "cdw.cli"):
         result = subprocess.run([sys.executable, "-m", module, "--version"], capture_output=True, text=True, timeout=20)
         assert result.returncode == 0, result.stderr

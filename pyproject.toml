@@ -23,6 +23,7 @@ dev = ["pytest==9.0.2"]
 [project.scripts]
 cdw = "cdw.cli:main"
 cdw-gui = "cdw.__main__:main"
+cdw-server = "cdw.server.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -31,7 +32,7 @@ where = ["src"]
 version = {attr = "cdw.__version__"}
 
 [tool.setuptools.package-data]
-cdw = ["assets/heroicons/outline/*.svg", "assets/heroicons/solid/*.svg", "assets/heroicons/LICENSE", "assets/heroicons/manifest.json"]
+cdw = ["assets/heroicons/outline/*.svg", "assets/heroicons/solid/*.svg", "assets/heroicons/LICENSE", "assets/heroicons/manifest.json", "i18n/locales/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -12,13 +12,14 @@ from qtpy.QtTest import QTest
 from qtpy.QtWidgets import QApplication
 
 from cdw.domain.contracts import QueryResult
+from cdw.infrastructure.duckdb_types import column_kind
 from cdw.application.service import ApplicationService
 from cdw.config import build_config
 from cdw.domain.filtering import (
     ColumnFilter, ColumnKind, FilterOperator, compile_filter, distinct_values, value_key,
 )
 from cdw.ui.design.manager import ThemeManager
-from cdw.ui.models import MAX_CELL_CHARACTERS, RAW_VALUE_ROLE
+from cdw.ui.models import ResultTableModel
 from cdw.ui.result_table import ResultTablePane
 
 
@@ -39,7 +40,7 @@ def pane_factory(application):
 
     def create(rows, types=("INTEGER", "VARCHAR"), columns=None):
         result = QueryResult(columns or tuple(f"column_{index}" for index in range(len(types))),
-                             types, tuple(tuple(row) for row in rows), False, 0.125)
+                             types, tuple(tuple(row) for row in rows), False, 0.125, tuple(column_kind(dtype) for dtype in types))
         pane = ResultTablePane(result, theme=manager)
         pane.resize(800, 480)
         pane.show()
@@ -136,7 +137,7 @@ def test_filters_intersect_and_failed_update_keeps_last_result(pane_factory):
 
 
 def test_independent_tabs_and_raw_snapshot_values(pane_factory):
-    long_text = "x" * (MAX_CELL_CHARACTERS + 100)
+    long_text = "x" * (ResultTableModel.MAX_CELL_CHARACTERS + 100)
     rows = [(2, long_text), (1, "short")]
     first, second = pane_factory(rows), pane_factory(rows)
     first.proxy.sort(0, Qt.AscendingOrder)
@@ -147,7 +148,7 @@ def test_independent_tabs_and_raw_snapshot_values(pane_factory):
     assert result.columns == first.source_model.result.columns
     assert result.types == ("INTEGER", "VARCHAR")
     assert first.source_model.result.rows == tuple(rows)
-    assert first.source_model.data(first.source_model.index(0, 1), RAW_VALUE_ROLE) == long_text
+    assert first.source_model.data(first.source_model.index(0, 1), ResultTableModel.RAW_VALUE_ROLE) == long_text
     assert first.source_model.data(first.source_model.index(0, 1)) != long_text
 
 

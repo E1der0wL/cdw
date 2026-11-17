@@ -1,12 +1,14 @@
 """Immutable query-tab and accessible-table contracts shared by UI and service."""
 
+from cdw.i18n import tr
+
 from dataclasses import dataclass
 from enum import StrEnum
 
 from cdw.domain.contracts import QueryResult, StorageMode
 
 DEFAULT_EXPORT_DELIMITER = ","
-INVALID_DELIMITER = "구분자는 줄바꿈·따옴표·NUL을 제외한 문자 하나로 지정해 주세요."
+INVALID_DELIMITER = tr('domain.workspace.invalid_delimiter')
 
 
 def validate_delimiter(delimiter: str) -> str:
@@ -41,11 +43,5 @@ class WorkspaceTable:
     updated_at: str | None
     columns: tuple[tuple[str, str], ...]
     storage_key: str
+    display_name: str
     preset_id: str | None = None
-    display_name: str = ""
-
-    def __post_init__(self) -> None:
-        # The storage adapter knows the unquoted leaf name. Older callers may
-        # omit it; keep their full SQL name visible instead of a blank label.
-        if not self.display_name:
-            object.__setattr__(self, "display_name", self.name)

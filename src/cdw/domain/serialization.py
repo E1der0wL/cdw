@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any
+from cdw.i18n import tr
+
+from typing import Any, Mapping
 
 from cdw.domain.contracts import (
-    CdwError, ErrorCode, ExecutionPolicy, OutputFormat, Preset,
+    CdwError, CommandMode, ErrorCode, ExecutionPolicy, OutputFormat, Preset, QueryResult,
     StorageMode, StorageTarget, WriteMode,
 )
+from cdw.domain.parsing import ParseSpec
 
-PRESET_FORMAT_VERSION = 1
-UNSUPPORTED_VERSION_MESSAGE = "지원하지 않는 프리셋 파일 버전입니다."
-INVALID_ARGUMENTS_MESSAGE = "arguments는 문자열 목록이어야 합니다."
+PRESET_FORMAT_VERSION = 2
+UNSUPPORTED_VERSION_MESSAGE = tr('domain.serialization.unsupported_version_message')
+INVALID_ARGUMENTS_MESSAGE = tr('domain.serialization.invalid_arguments_message')
+
+
+def query_to_dict(result: QueryResult) -> dict[str, Any]:
+    """CLI wire representation; presentation classification is internal metadata."""
+    return {
+        "columns": result.columns, "types": result.types, "rows": result.rows,
+        "truncated": result.truncated, "elapsed_seconds": result.elapsed_seconds,
+    }
 
 
 def preset_to_dict(preset: Preset, *, include_environment: bool = True) -> dict[str, Any]:
@@ -26,12 +37,15 @@ def preset_to_dict(preset: Preset, *, include_environment: bool = True) -> dict[
         "table_name": preset.table_name, "write_mode": preset.write_mode.value,
         "execution": {"timeout_seconds": preset.execution.timeout_seconds,
                       "max_output_bytes": preset.execution.max_output_bytes},
+        "command_mode": preset.command_mode.value,
+        "shell_script": preset.shell_script,
+        "parsing": preset.parsing.to_dict(),
     }
 
 
 def preset_from_dict(data: dict[str, Any]) -> Preset:
     try:
-        if data["version"] != PRESET_FORMAT_VERSION:
+        if type(data["version"]) is not int or data["version"] != PRESET_FORMAT_VERSION:
             raise CdwError(ErrorCode.INVALID_PRESET, UNSUPPORTED_VERSION_MESSAGE)
         if not isinstance(data["arguments"], list):
             raise CdwError(ErrorCode.INVALID_PRESET, INVALID_ARGUMENTS_MESSAGE)
@@ -43,6 +57,23 @@ def preset_from_dict(data: dict[str, Any]) -> Preset:
             storage=StorageTarget(StorageMode(data["storage"]["mode"]), data["storage"]["path"]),
             table_name=data["table_name"], write_mode=WriteMode(data["write_mode"]),
             execution=ExecutionPolicy(**data["execution"]),
+            command_mode=CommandMode(data["command_mode"]), shell_script=data["shell_script"],
+            parsing=ParseSpec.from_dict(data["parsing"]),
         )
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise CdwError(ErrorCode.INVALID_PRESET, str(exc)) from exc
+
+
+def migrate_preset_document_v1(data: dict[str, Any], baseline_environment: Mapping[str, str]) -> dict[str, Any]:
+    """One-time persistence migration; normal readers only accept the current schema."""
+    try:
+        if type(data.get("version")) is not int or data["version"] != 1:
+            raise CdwError(ErrorCode.INVALID_PRESET, UNSUPPORTED_VERSION_MESSAGE)
+        values = dict(data)
+        values.update(version=PRESET_FORMAT_VERSION, command_mode=CommandMode.DIRECT.value,
+                      shell_script="", parsing=ParseSpec().to_dict())
+        values["environment"] = {**baseline_environment, **data["environment"]}
+        # Validation and normalization are identical to all new documents.
+        return preset_to_dict(preset_from_dict(values))
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise CdwError(ErrorCode.INVALID_PRESET, str(exc)) from exc

@@ -1,5 +1,7 @@
 """The authoritative, immutable internal design specification (no Qt imports)."""
 
+from cdw.i18n import tr
+
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
@@ -51,6 +53,7 @@ CODE_TEXT_ROLES = frozenset((TextRole.CODE, TextRole.SQL_CODE))
 class LayoutRole(StrEnum):
     FLUSH = "flush"
     ROW = "row"
+    CONTENT = "content"
     PAGE = "page"
     TITLE = "title"
     SECTION = "section"
@@ -59,6 +62,7 @@ class LayoutRole(StrEnum):
     FORM = "form"
     SIDEBAR = "sidebar"
     DIALOG = "dialog"
+    WINDOW_TITLEBAR = "window_titlebar"
 
 
 @dataclass(frozen=True)
@@ -70,17 +74,44 @@ class MetricRule:
 
     def __post_init__(self):
         if self.base < 0:
-            raise ValueError("Metric base must be nonnegative")
+            raise ValueError(tr('ui.design.spec.metricrule.post_init'))
         if self.mode is MetricMode.CLAMPED and (
             self.minimum is None or self.maximum is None or not 0 <= self.minimum <= self.base <= self.maximum
         ):
-            raise ValueError("Clamped metrics require minimum <= base <= maximum")
+            raise ValueError(tr('ui.design.spec.metricrule.post_init_2'))
 
     def resolve(self, scale: float) -> int:
         value = self.base if self.mode is MetricMode.FIXED else self.base * scale
         if self.mode is MetricMode.CLAMPED:
             value = max(self.minimum, min(self.maximum, value))
         return round(value)
+
+
+class MotionRole(StrEnum):
+    PAGE = "page"
+    TAB = "tab"
+    SIDEBAR = "sidebar"
+
+
+class MotionEasing(StrEnum):
+    OUT_CUBIC = "out_cubic"
+
+
+@dataclass(frozen=True)
+class ResolvedMotion:
+    duration_ms: int
+    distance: int
+    easing: MotionEasing
+
+
+@dataclass(frozen=True)
+class MotionRule:
+    duration_ms: int
+    distance: MetricRule
+    easing: MotionEasing = MotionEasing.OUT_CUBIC
+
+    def resolve(self, scale: float) -> ResolvedMotion:
+        return ResolvedMotion(self.duration_ms, self.distance.resolve(scale), self.easing)
 
 
 @dataclass(frozen=True)
@@ -125,7 +156,6 @@ METRICS = MappingProxyType({
     "sidebar_min_width": MetricRule(170, MetricMode.SCALED),
     "sidebar_max_width": MetricRule(420, MetricMode.SCALED),
     "sidebar_resize_handle": MetricRule(8),
-    "sidebar_collapsed_width": MetricRule(64, MetricMode.SCALED),
     "icon": MetricRule(18, MetricMode.SCALED),
     "nav_icon": MetricRule(20, MetricMode.SCALED),
     "spin_icon": MetricRule(12, MetricMode.SCALED),
@@ -144,6 +174,10 @@ METRICS = MappingProxyType({
     "splitter_handle": MetricRule(4),
     "window_width": MetricRule(1320),
     "window_height": MetricRule(900),
+    "window_titlebar_height": MetricRule(44, MetricMode.SCALED),
+    "window_resize_margin": MetricRule(6),
+    "window_titlebar_padding": MetricRule(8, MetricMode.CLAMPED, 6, 12),
+    "window_control_width": MetricRule(38, MetricMode.SCALED),
     "minimum_width": MetricRule(960),
     "minimum_height": MetricRule(640),
     "dialog_width": MetricRule(700, MetricMode.SCALED),
@@ -155,14 +189,22 @@ METRICS = MappingProxyType({
 LAYOUTS = MappingProxyType({
     LayoutRole.FLUSH: LayoutRecipe(("zero",) * 4, "zero"),
     LayoutRole.ROW: LayoutRecipe(("zero",) * 4, "gap_small"),
+    LayoutRole.CONTENT: LayoutRecipe(("zero",) * 4, "gap"),
     LayoutRole.PAGE: LayoutRecipe(("page_margin",) * 4, "section_gap"),
     LayoutRole.TITLE: LayoutRecipe(("section_padding",) * 4, "gap_small"),
     LayoutRole.SECTION: LayoutRecipe(("section_padding",) * 4, "gap"),
     LayoutRole.SECTIONS: LayoutRecipe(("zero",) * 4, "section_gap"),
     LayoutRole.CARD: LayoutRecipe(("card_margin",) * 4, "gap"),
-    LayoutRole.FORM: LayoutRecipe(("card_margin",) * 4, "gap"),
+    LayoutRole.FORM: LayoutRecipe(("zero",) * 4, "gap"),
     LayoutRole.SIDEBAR: LayoutRecipe(("section_padding",) * 4, "gap_small"),
     LayoutRole.DIALOG: LayoutRecipe(("card_margin",) * 4, "gap"),
+    LayoutRole.WINDOW_TITLEBAR: LayoutRecipe(("window_titlebar_padding", "zero", "window_titlebar_padding", "zero"), "window_titlebar_padding"),
+})
+
+MOTIONS = MappingProxyType({
+    MotionRole.PAGE: MotionRule(180, MetricRule(12, MetricMode.CLAMPED, 8, 16)),
+    MotionRole.TAB: MotionRule(150, MetricRule(8, MetricMode.CLAMPED, 6, 12)),
+    MotionRole.SIDEBAR: MotionRule(200, MetricRule(0)),
 })
 
 FONT_RULES = MappingProxyType({
@@ -236,9 +278,10 @@ class StyleSpec:
     fonts: Mapping[TextRole, FontRule]
     buttons: Mapping[ButtonVariant, Mapping[VisualState, ColorRecipe]]
     field_icon_colors: Mapping[VisualState, str]
+    motions: Mapping[MotionRole, MotionRule]
 
 
-STYLE_SPEC = StyleSpec(METRICS, LAYOUTS, FONT_RULES, BUTTON_RECIPES, FIELD_ICON_COLORS)
+STYLE_SPEC = StyleSpec(METRICS, LAYOUTS, FONT_RULES, BUTTON_RECIPES, FIELD_ICON_COLORS, MOTIONS)
 
 
 @dataclass(frozen=True)
@@ -250,6 +293,9 @@ class ResolvedStyle:
 
     def metric(self, name: str) -> int:
         return self.metrics[name]
+
+    def motion(self, role: MotionRole) -> ResolvedMotion:
+        return self.spec.motions[MotionRole(role)].resolve(self.preferences.ui_scale)
 
     def font_points(self, role: TextRole = TextRole.BODY) -> float:
         return self.preferences.font_size * self.preferences.ui_scale * self.spec.fonts[role].multiplier

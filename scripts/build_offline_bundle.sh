@@ -24,8 +24,10 @@ mapfile -t BUILD_REQUIREMENTS < <("$BUILD_PYTHON" -c 'import sys,tomllib; print(
 cp -- "$RUNTIME_LOCK" "$BUNDLE_DIR/runtime.lock"
 cp -- "$PROJECT_DIR/scripts/install_offline.sh" "$PROJECT_DIR/scripts/check_environment.py" "$BUNDLE_DIR/"
 cp -- "$PROJECT_DIR/README.md" "$BUNDLE_DIR/"
+mkdir -p -- "$BUNDLE_DIR/docs"
+cp -- "$PROJECT_DIR/docs/external-task-protocol.md" "$BUNDLE_DIR/docs/"
 (
     cd -- "$BUNDLE_DIR"
-    sha256sum wheelhouse/*.whl runtime.lock install_offline.sh check_environment.py README.md > SHA256SUMS
+    sha256sum wheelhouse/*.whl runtime.lock install_offline.sh check_environment.py README.md docs/external-task-protocol.md > SHA256SUMS
 )
-echo "Bundle created at $BUNDLE_DIR. Transfer wheelhouse, runtime.lock, install_offline.sh, check_environment.py, README.md and SHA256SUMS."
+echo "Bundle created at $BUNDLE_DIR. Transfer wheelhouse, docs, runtime.lock, install_offline.sh, check_environment.py, README.md and SHA256SUMS."

@@ -1,156 +1,229 @@
+"""Actual command, environment and parsing configuration; preview never stores data."""
+
 from __future__ import annotations
 
-import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
+from qtpy.QtCore import Qt, Signal
+from qtpy.QtWidgets import QTableWidgetItem
+
+from cdw.config import BYTES_PER_MIB, DEFAULT_CSV_DELIMITER, DEFAULT_ENCODING
+from cdw.domain.contracts import CdwError, ExecutionPolicy, OutputFormat, Preset, StorageMode, StorageTarget, WriteMode
+from cdw.domain.parsing import ColumnCountMode, DelimiterMode, ParseSpec
+from cdw.i18n import tr
+from cdw.ui.command_editor import CommandEditor, EnvironmentEditor
 from cdw.ui.design.icons import IconName
 from cdw.ui.design.manager import ThemeManager
 from cdw.ui.design.spec import LayoutRole, TextRole
 from cdw.ui.widgets import (
-    CdwActionLineEdit, CdwComboBox, CdwDialog, CdwDialogButtonBox, CdwFileDialog,
-    CdwFormLayout, CdwHBoxLayout, CdwLabel, CdwLineEdit, CdwMessageBox,
-    CdwPlainTextEdit, CdwButton, CdwScrollArea, CdwTabWidget, CdwVBoxLayout, CdwWidget,
+    CdwActionLineEdit, CdwButton, CdwComboBox, CdwDialog, CdwDialogButtonBox,
+    CdwFileDialog, CdwFormLayout, CdwHBoxLayout, CdwLabel, CdwLineEdit,
+    CdwPlainTextEdit, CdwScrollArea, CdwTableWidget, CdwTabWidget, CdwVBoxLayout, CdwWidget,
 )
-
-from cdw.application.service import ApplicationService
-from cdw.application.examples import demo_preset
-from cdw.config import BYTES_PER_MIB, DEFAULT_CSV_DELIMITER, DEFAULT_ENCODING
-from cdw.domain.contracts import (
-    CdwError, ExecutionPolicy, OutputFormat, Preset, StorageMode, StorageTarget, WriteMode,
-)
-
-DEFAULT_TABLE = "command_result"
-STORAGE_LABELS = {StorageMode.FILE: "파일 · 종료 후에도 유지", StorageMode.MEMORY: "메모리 · 앱 종료 시 데이터 삭제"}
-WRITE_LABELS = {WriteMode.REPLACE: "전체 교체", WriteMode.APPEND: "행 추가 · 컬럼과 자료형이 같아야 함"}
-LABELS = {
-    "title": "프리셋 등록", "edit_title": "프리셋 편집", "demo": "데모 채우기",
-    "name": "프리셋 이름", "command": "실행 파일", "arguments": "인자 · 한 줄에 하나",
-    "cwd": "작업 디렉터리", "env": "환경변수 · JSON 객체", "format": "출력 형식",
-    "encoding": "문자 인코딩", "delimiter": "CSV 구분자", "storage": "저장 위치",
-    "path": "DuckDB 파일", "table": "테이블 이름", "write": "저장 방식",
-    "timeout": "제한 시간 · 초", "output": "stdout + stderr · 바이트", "save": "등록",
-    "limits_help": "1 MiB = {bytes:,}바이트입니다. 제한 시간은 소수 입력이 가능합니다.",
-    "update": "변경 저장", "cancel": "취소", "browse": "찾기…",
-    "command_tab": "명령어", "storage_tab": "파싱 및 저장", "limits_tab": "실행 제한",
-    "help": "실행 파일과 인자를 분리합니다. 따옴표로 감싸지 마세요.\n파이프가 필요하면 /bin/bash에 -c와 스크립트를 각각 인자로 전달하세요.",
-    "storage_help": "결과는 source.<테이블 이름>에 저장됩니다.\n빈 출력·파싱 오류·실행 실패 시 기존 테이블은 유지됩니다.",
-    "environment_help": "기존 환경변수에 덮어씁니다. 비밀번호 등 비밀 값은 저장하지 마세요.",
-    "error": "프리셋을 저장하지 못했습니다.", "env_error": "환경변수는 문자열 키와 문자열 값으로 된 JSON 객체여야 합니다.",
-}
-FILE_FILTER = "DuckDB (*.duckdb);;모든 파일 (*)"
 
 
 class PresetDialog(CdwDialog):
-    def __init__(self, service: ApplicationService, preset: Preset | None = None, parent=None) -> None:
+    DEFAULT_TABLE = "command_result"
+    DEFAULT_FIXED_COUNT = 3
+    MAX_AUTOFILL_COLUMNS = 256
+    PREVIEW_WORKERS = 1
+    PREVIEW_WORKER_NAME = "cdw-preview"
+    TAB_LITERAL = "\\t"
+    FILE_FILTER = tr("ui.preset_dialog.file_filter")
+    _preview_completed = Signal(object, object)
+
+    def __init__(self, service, preset: Preset | None = None, parent=None):
         super().__init__(parent, theme=getattr(parent, "theme", None) or ThemeManager.for_service(service))
         self.service = service
         self.original = preset
-        self.saved_preset: Preset | None = None
-        self.setWindowTitle(LABELS["edit_title"] if preset else LABELS["title"])
-        layout = CdwVBoxLayout(self, role=LayoutRole.DIALOG)
-        self.name_edit = CdwLineEdit()
+        self.saved_preset = None
+        self._preset_id = preset.id if preset else str(uuid4())
+        self._preview_busy = False
+        self._closing_after_preview = False
+        self._preview_cancel = threading.Event()
+        self._preview_executor = None
+        self.setWindowTitle(tr("ui.preset_dialog.labels.edit_title") if preset else tr("ui.pages.sql.text.new"))
+        layout = CdwVBoxLayout(self, role=LayoutRole.DIALOG, theme=self.theme)
+        names = CdwFormLayout(role=LayoutRole.FORM, theme=self.theme)
+        self.name_edit = CdwLineEdit(theme=self.theme)
         self.name_edit.setObjectName("preset_name")
-        name_form = CdwFormLayout(role=LayoutRole.ROW)
-        name_form.addRow(LABELS["name"], self.name_edit)
-        layout.addLayout(name_form)
-        self.tabs = CdwTabWidget()
-        layout.addWidget(self.tabs)
-
-        command_page = CdwWidget()
-        command = CdwFormLayout(command_page)
-        self.executable_edit = CdwLineEdit()
-        self.executable_edit.setObjectName("executable")
-        self.arguments_edit = CdwPlainTextEdit(code=True, compact=True)
-        self.arguments_edit.setObjectName("arguments")
-        self.cwd_edit = CdwLineEdit()
-        self.environment_edit = CdwPlainTextEdit("{}", code=True, compact=True)
-        command.addRow(LABELS["command"], self.executable_edit)
-        command.addRow(LABELS["arguments"], self.arguments_edit)
-        command.addRow(LABELS["cwd"], self.cwd_edit)
-        command.addRow(LABELS["env"], self.environment_edit)
-        for message in (LABELS["help"], LABELS["environment_help"]):
-            label = CdwLabel(message, role=TextRole.MUTED)
-            label.setWordWrap(True)
-            command.addRow(label)
-        self._add_tab(command_page, LABELS["command_tab"])
-
-        storage_page = CdwWidget()
-        storage = CdwFormLayout(storage_page)
-        self.format_combo = CdwComboBox()
-        for value in OutputFormat:
-            self.format_combo.addItem(value.value.upper(), value)
-        self.encoding_edit = CdwLineEdit(DEFAULT_ENCODING)
-        self.delimiter_edit = CdwLineEdit(DEFAULT_CSV_DELIMITER)
-        self.storage_combo = CdwComboBox()
-        for value, label in STORAGE_LABELS.items():
-            self.storage_combo.addItem(label, value)
-        self.path_edit = CdwActionLineEdit(str(service.config.default_database), action_text=LABELS["browse"], action_icon=IconName.FOLDER)
-        self.path_button = self.path_edit.action_button
-        self.path_button.clicked.connect(self._browse)
-        self.table_edit = CdwLineEdit(DEFAULT_TABLE)
-        self.table_edit.setObjectName("table_name")
-        self.write_combo = CdwComboBox()
-        for value, label in WRITE_LABELS.items():
-            self.write_combo.addItem(label, value)
-        storage.addRow(LABELS["format"], self.format_combo)
-        storage.addRow(LABELS["encoding"], self.encoding_edit)
-        storage.addRow(LABELS["delimiter"], self.delimiter_edit)
-        storage.addRow(LABELS["storage"], self.storage_combo)
-        storage.addRow(LABELS["path"], self.path_edit)
-        storage.addRow(LABELS["table"], self.table_edit)
-        storage.addRow(LABELS["write"], self.write_combo)
-        help_label = CdwLabel(LABELS["storage_help"], role=TextRole.MUTED)
-        help_label.setWordWrap(True)
-        storage.addRow(help_label)
-        self.storage_combo.currentIndexChanged.connect(self._storage_changed)
-        self.format_combo.currentIndexChanged.connect(self._format_changed)
-        self._add_tab(storage_page, LABELS["storage_tab"])
-
-        limits_page = CdwWidget()
-        limits = CdwFormLayout(limits_page)
-        self.timeout_edit = CdwLineEdit(str(service.config.execution_policy.timeout_seconds))
-        self.output_edit = CdwLineEdit(str(service.config.execution_policy.max_output_bytes))
-        limits.addRow(LABELS["timeout"], self.timeout_edit)
-        limits.addRow(LABELS["output"], self.output_edit)
-        limits_hint = CdwLabel(LABELS["limits_help"].format(bytes=BYTES_PER_MIB), role=TextRole.MUTED)
-        limits_hint.setWordWrap(True)
-        limits.addRow(limits_hint)
-        self._add_tab(limits_page, LABELS["limits_tab"])
-
-        footer = CdwHBoxLayout()
-        self.demo_button = CdwButton(LABELS["demo"], icon=IconName.DOCUMENT)
-        self.demo_button.setObjectName("fill_demo")
-        self.demo_button.clicked.connect(self.fill_demo)
-        footer.addWidget(self.demo_button)
+        names.addRow(tr("ui.preset_dialog.labels.name"), self.name_edit)
+        layout.addLayout(names)
+        self.tabs = CdwTabWidget(theme=self.theme)
+        layout.addWidget(self.tabs, 1)
+        self.command_editor = CommandEditor(theme=self.theme)
+        self._add_editor_tab(self.command_editor, tr("collection.preset.command_tab"))
+        self.environment_editor = EnvironmentEditor(theme=self.theme)
+        self._add_editor_tab(self.environment_editor, tr("collection.preset.environment_tab"))
+        self._build_parsing()
+        self._build_storage()
+        self._build_preview()
+        self.feedback = CdwLabel(role=TextRole.ERROR, theme=self.theme)
+        self.feedback.setWordWrap(True)
+        layout.addWidget(self.feedback)
+        footer = CdwHBoxLayout(role=LayoutRole.ROW, theme=self.theme)
+        self.preview_button = CdwButton(tr("collection.preset.preview"), icon=IconName.PLAY, theme=self.theme)
+        self.preview_button.setObjectName("preview_command")
+        self.preview_button.clicked.connect(self._preview)
+        self.stop_preview_button = CdwButton(tr("collection.preset.preview_stop"), icon=IconName.STOP, theme=self.theme)
+        self.stop_preview_button.clicked.connect(self._cancel_preview)
+        self.stop_preview_button.setEnabled(False)
+        footer.addWidget(self.preview_button)
+        footer.addWidget(self.stop_preview_button)
         footer.addStretch()
-        buttons = CdwDialogButtonBox()
-        self.save_button = buttons.add_action(LABELS["update"] if preset else LABELS["save"],
+        buttons = CdwDialogButtonBox(theme=self.theme)
+        self.save_button = buttons.add_action(tr("ui.preset_dialog.labels.update") if preset else tr("ui.preset_dialog.labels.save"),
                                              CdwDialogButtonBox.AcceptRole, icon=IconName.CHECK, primary=True)
         self.save_button.setObjectName("save_preset")
-        buttons.add_action(LABELS["cancel"], CdwDialogButtonBox.RejectRole, icon=IconName.CLOSE)
+        buttons.add_action(tr("common.cancel"), CdwDialogButtonBox.RejectRole, icon=IconName.CLOSE)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         footer.addWidget(buttons)
         layout.addLayout(footer)
+        self._preview_completed.connect(self._finish_preview, Qt.QueuedConnection)
         if preset:
             self._load(preset)
+        self._parsing_changed()
         self._storage_changed()
-        self._format_changed()
 
     def _add_tab(self, page, title):
-        scroll = CdwScrollArea()
+        scroll = CdwScrollArea(theme=self.theme)
         scroll.setWidget(page)
         self.tabs.addTab(scroll, title)
+        return scroll
 
-    def _load(self, preset: Preset) -> None:
+    def _add_editor_tab(self, editor, title):
+        page = CdwWidget(theme=self.theme)
+        layout = CdwVBoxLayout(page, role=LayoutRole.SECTION, theme=self.theme)
+        layout.addWidget(editor)
+        return self._add_tab(page, title)
+
+    def _form_page(self):
+        page = CdwWidget(theme=self.theme)
+        layout = CdwVBoxLayout(page, role=LayoutRole.SECTION, theme=self.theme)
+        form = CdwFormLayout(role=LayoutRole.FORM, theme=self.theme)
+        layout.addLayout(form)
+        return page, layout, form
+
+    def _help(self, text, layout):
+        label = CdwLabel(text, role=TextRole.MUTED, theme=self.theme)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        return label
+
+    def _build_parsing(self):
+        page, layout, form = self._form_page()
+        self.parsing_form = form
+        self.format_combo = CdwComboBox(theme=self.theme)
+        self.format_combo.addItem(tr("collection.preset.delimited"), OutputFormat.CSV)
+        for format in (OutputFormat.JSON, OutputFormat.NDJSON, OutputFormat.TEXT):
+            self.format_combo.addItem(format.value.upper(), format)
+        self.encoding_edit = CdwLineEdit(DEFAULT_ENCODING, theme=self.theme)
+        self.header_combo = CdwComboBox(theme=self.theme)
+        self.header_combo.addItem(tr("collection.preset.header_yes"), True)
+        self.header_combo.addItem(tr("collection.preset.header_no"), False)
+        self.column_mode_combo = CdwComboBox(theme=self.theme)
+        self.column_mode_combo.addItem(tr("collection.preset.dynamic"), ColumnCountMode.DYNAMIC)
+        self.column_mode_combo.addItem(tr("collection.preset.fixed"), ColumnCountMode.FIXED)
+        self.column_count_edit = CdwLineEdit(str(self.DEFAULT_FIXED_COUNT), theme=self.theme)
+        self.column_count_edit.setObjectName("fixed_column_count")
+        self.column_names_edit = CdwPlainTextEdit(compact=True, theme=self.theme)
+        self.column_names_edit.setObjectName("fixed_column_names")
+        self.delimiter_mode_combo = CdwComboBox(theme=self.theme)
+        self.delimiter_mode_combo.addItem(tr("collection.preset.character"), DelimiterMode.CHARACTER)
+        self.delimiter_mode_combo.addItem(tr("collection.preset.whitespace"), DelimiterMode.WHITESPACE)
+        self.delimiter_edit = CdwLineEdit(DEFAULT_CSV_DELIMITER, theme=self.theme)
+        self.infer_types_combo = CdwComboBox(theme=self.theme)
+        self.infer_types_combo.addItem(tr("collection.preset.infer_types"), True)
+        self.infer_types_combo.addItem(tr("collection.preset.all_strings"), False)
+        fields = (
+            (tr("ui.preset_dialog.labels.format"), self.format_combo),
+            (tr("ui.preset_dialog.labels.encoding"), self.encoding_edit),
+            (tr("collection.preset.header"), self.header_combo),
+            (tr("collection.preset.column_mode"), self.column_mode_combo),
+            (tr("collection.preset.column_count"), self.column_count_edit),
+            (tr("collection.preset.column_names"), self.column_names_edit),
+            (tr("collection.preset.delimiter_mode"), self.delimiter_mode_combo),
+            (tr("collection.preset.delimiter_character"), self.delimiter_edit),
+            (tr("collection.preset.type_inference"), self.infer_types_combo),
+        )
+        for label, widget in fields:
+            form.addRow(label, widget)
+        for message in (tr("collection.preset.delimiter_help"), tr("collection.preset.fixed_help"),
+                        tr("collection.preset.parsing_help"), tr("collection.preset.format_help")):
+            self._help(message, layout)
+        layout.addStretch()
+        self._add_tab(page, tr("collection.preset.parsing_tab"))
+        self.format_combo.currentIndexChanged.connect(self._parsing_changed)
+        self.column_mode_combo.currentIndexChanged.connect(self._parsing_changed)
+        self.delimiter_mode_combo.currentIndexChanged.connect(self._parsing_changed)
+        self.column_count_edit.editingFinished.connect(self._sync_column_names)
+        self._sync_column_names()
+
+    def _build_storage(self):
+        page, layout, form = self._form_page()
+        self.storage_combo = CdwComboBox(theme=self.theme)
+        self.storage_combo.addItem(tr("ui.preset_dialog.storage_labels_2"), StorageMode.MEMORY)
+        self.storage_combo.addItem(tr("ui.preset_dialog.storage_labels"), StorageMode.FILE)
+        self.path_edit = CdwActionLineEdit(str(self.service.config.default_database), action_text=tr("ui.preset_dialog.labels.browse"), action_icon=IconName.FOLDER, theme=self.theme)
+        self.path_edit.action_button.clicked.connect(self._browse)
+        self.table_edit = CdwLineEdit(self.DEFAULT_TABLE, theme=self.theme)
+        self.table_edit.setObjectName("table_name")
+        self.write_combo = CdwComboBox(theme=self.theme)
+        self.write_combo.addItem(tr("ui.preset_dialog.write_labels"), WriteMode.REPLACE)
+        self.write_combo.addItem(tr("ui.preset_dialog.write_labels_2"), WriteMode.APPEND)
+        self.timeout_edit = CdwLineEdit(str(self.service.config.execution_policy.timeout_seconds), theme=self.theme)
+        self.output_edit = CdwLineEdit(str(self.service.config.execution_policy.max_output_bytes), theme=self.theme)
+        for label, widget in ((tr("ui.preset_dialog.labels.storage"), self.storage_combo),
+                              (tr("ui.preset_dialog.labels.path"), self.path_edit),
+                              (tr("ui.preset_dialog.labels.table"), self.table_edit),
+                              (tr("ui.preset_dialog.labels.write"), self.write_combo),
+                              (tr("ui.preset_dialog.labels.timeout"), self.timeout_edit),
+                              (tr("ui.preset_dialog.labels.output"), self.output_edit)):
+            form.addRow(label, widget)
+        self._help(tr("ui.preset_dialog.labels.storage_help"), layout)
+        self._help(tr("ui.preset_dialog.labels.limits_help").format(bytes=BYTES_PER_MIB), layout)
+        layout.addStretch()
+        self._add_tab(page, tr("collection.preset.storage_tab"))
+        self.storage_combo.currentIndexChanged.connect(self._storage_changed)
+
+    def _build_preview(self):
+        page = CdwWidget(theme=self.theme)
+        layout = CdwVBoxLayout(page, role=LayoutRole.SECTION, theme=self.theme)
+        self._help(tr("collection.preset.preview_help"), layout)
+        self.preview_status = CdwLabel(tr("collection.preset.preview_empty"), role=TextRole.MUTED, theme=self.theme)
+        self.preview_status.setWordWrap(True)
+        layout.addWidget(self.preview_status)
+        self.preview_tabs = CdwTabWidget(theme=self.theme)
+        self.raw_output = CdwPlainTextEdit(code=True, theme=self.theme)
+        self.raw_output.setReadOnly(True)
+        self.stderr_output = CdwPlainTextEdit(code=True, theme=self.theme)
+        self.stderr_output.setReadOnly(True)
+        self.preview_table = CdwTableWidget(0, 0, theme=self.theme)
+        self.preview_table.setObjectName("command_preview_table")
+        self.preview_tabs.addTab(self.preview_table, tr("collection.preset.parsed_output"))
+        self.preview_tabs.addTab(self.raw_output, tr("collection.preset.raw_output"))
+        self.preview_tabs.addTab(self.stderr_output, tr("collection.preset.stderr"))
+        layout.addWidget(self.preview_tabs, 1)
+        self.preview_page = self._add_tab(page, tr("collection.preset.preview_tab"))
+
+    def _load(self, preset):
         self.name_edit.setText(preset.name)
-        self.executable_edit.setText(preset.executable)
-        self.arguments_edit.setPlainText("\n".join(preset.arguments))
-        self.cwd_edit.setText(preset.working_directory or "")
-        self.environment_edit.setPlainText(json.dumps(dict(preset.environment), ensure_ascii=False, indent=2))
+        self.command_editor.load_command(preset.command)
+        self.environment_editor.load_environment(preset.environment)
         self.format_combo.setCurrentIndex(self.format_combo.findData(preset.output_format))
         self.encoding_edit.setText(preset.encoding)
-        self.delimiter_edit.setText(preset.csv_delimiter)
+        self.delimiter_edit.setText(self.TAB_LITERAL if preset.csv_delimiter == "\t" else preset.csv_delimiter)
+        self.header_combo.setCurrentIndex(self.header_combo.findData(preset.parsing.has_header))
+        self.column_mode_combo.setCurrentIndex(self.column_mode_combo.findData(preset.parsing.column_mode))
+        if preset.parsing.column_count is not None:
+            self.column_count_edit.setText(str(preset.parsing.column_count))
+        self.column_names_edit.setPlainText("\n".join(preset.parsing.column_names))
+        self._sync_column_names()
+        self.delimiter_mode_combo.setCurrentIndex(self.delimiter_mode_combo.findData(preset.parsing.delimiter_mode))
+        self.infer_types_combo.setCurrentIndex(self.infer_types_combo.findData(preset.parsing.infer_types))
         self.storage_combo.setCurrentIndex(self.storage_combo.findData(preset.storage.mode))
         self.path_edit.setText(preset.storage.path or str(self.service.config.default_database))
         self.table_edit.setText(preset.table_name)
@@ -158,42 +231,147 @@ class PresetDialog(CdwDialog):
         self.timeout_edit.setText(str(preset.execution.timeout_seconds))
         self.output_edit.setText(str(preset.execution.max_output_bytes))
 
-    def fill_demo(self) -> None:
-        self._load(demo_preset(self.service.config))
+    def _parsing_changed(self, *_):
+        delimited = OutputFormat(self.format_combo.currentData()) is OutputFormat.CSV
+        fixed = ColumnCountMode(self.column_mode_combo.currentData()) is ColumnCountMode.FIXED
+        character = DelimiterMode(self.delimiter_mode_combo.currentData()) is DelimiterMode.CHARACTER
+        for widget in (self.header_combo, self.column_mode_combo, self.delimiter_mode_combo, self.infer_types_combo):
+            widget.setEnabled(delimited)
+        for widget in (self.column_count_edit, self.column_names_edit):
+            widget.setEnabled(delimited and fixed)
+        self.delimiter_edit.setEnabled(delimited and character)
+        self.parsing_form.setRowVisible(self.delimiter_edit, delimited and character)
 
-    def _browse(self) -> None:
-        path, _ = CdwFileDialog.getSaveFileName(self, LABELS["path"], self.path_edit.text(), FILE_FILTER)
+    def _sync_column_names(self):
+        try:
+            count = int(self.column_count_edit.text())
+        except ValueError:
+            return
+        if not 1 <= count <= self.MAX_AUTOFILL_COLUMNS:
+            return
+        names = self.column_names_edit.toPlainText().splitlines()
+        # The domain validates the requested count; this only fills visible names.
+        names = names[:count] + list(ParseSpec.generated_names(count)[len(names):])
+        self.column_names_edit.setPlainText("\n".join(names))
+
+    def _storage_changed(self, *_):
+        self.path_edit.setEnabled(StorageMode(self.storage_combo.currentData()) is StorageMode.FILE)
+
+    def _browse(self):
+        path, _ = CdwFileDialog.getSaveFileName(self, tr("ui.preset_dialog.labels.path"), self.path_edit.text(), self.FILE_FILTER)
         if path:
             self.path_edit.setText(path)
 
-    def _storage_changed(self) -> None:
-        enabled = StorageMode(self.storage_combo.currentData()) is StorageMode.FILE
-        self.path_edit.setEnabled(enabled)
-        self.path_button.setEnabled(enabled)
+    def _candidate(self, *, preview=False):
+        execution = ExecutionPolicy(float(self.timeout_edit.text()), int(self.output_edit.text()))
+        command = self.command_editor.command(execution, self.encoding_edit.text().strip(), self.environment_editor.environment())
+        format = OutputFormat(self.format_combo.currentData())
+        mode = ColumnCountMode(self.column_mode_combo.currentData())
+        parsing = (ParseSpec(has_header=bool(self.header_combo.currentData()), column_mode=mode,
+                             column_count=int(self.column_count_edit.text()) if mode is ColumnCountMode.FIXED else None,
+                             column_names=tuple(self.column_names_edit.toPlainText().splitlines()) if mode is ColumnCountMode.FIXED else (),
+                             delimiter_mode=DelimiterMode(self.delimiter_mode_combo.currentData()),
+                             infer_types=bool(self.infer_types_combo.currentData()))
+                   if format is OutputFormat.CSV else ParseSpec())
+        storage = StorageMode(self.storage_combo.currentData())
+        delimiter = "\t" if self.delimiter_edit.text() == self.TAB_LITERAL else self.delimiter_edit.text()
+        if format is not OutputFormat.CSV or parsing.delimiter_mode is DelimiterMode.WHITESPACE:
+            delimiter = DEFAULT_CSV_DELIMITER
+        return Preset(
+            id=self._preset_id, name=self.name_edit.text().strip() or (tr("collection.preset.preview") if preview else ""),
+            executable=command.executable, arguments=command.arguments, working_directory=command.working_directory,
+            environment=command.environment, output_format=format, encoding=command.encoding, csv_delimiter=delimiter,
+            storage=StorageTarget(storage, self.path_edit.text().strip() if storage is StorageMode.FILE else None),
+            table_name=self.table_edit.text().strip(), write_mode=WriteMode(self.write_combo.currentData()),
+            execution=execution, command_mode=command.mode, shell_script=command.script, parsing=parsing,
+        )
 
-    def _format_changed(self) -> None:
-        self.delimiter_edit.setEnabled(OutputFormat(self.format_combo.currentData()) is OutputFormat.CSV)
-
-    def _save(self) -> None:
+    def _save(self):
         try:
-            environment = json.loads(self.environment_edit.toPlainText())
-            if not isinstance(environment, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in environment.items()):
-                raise ValueError(LABELS["env_error"])
-            mode = StorageMode(self.storage_combo.currentData())
-            arguments = self.arguments_edit.toPlainText()
-            preset = Preset(
-                id=self.original.id if self.original else str(uuid4()), name=self.name_edit.text(),
-                executable=self.executable_edit.text().strip(), arguments=tuple(arguments.splitlines()),
-                working_directory=self.cwd_edit.text().strip() or None, environment=environment,
-                output_format=OutputFormat(self.format_combo.currentData()), encoding=self.encoding_edit.text().strip(),
-                csv_delimiter=self.delimiter_edit.text(),
-                storage=StorageTarget(mode, self.path_edit.text().strip() if mode is StorageMode.FILE else None),
-                table_name=self.table_edit.text().strip(), write_mode=WriteMode(self.write_combo.currentData()),
-                execution=ExecutionPolicy(float(self.timeout_edit.text()), int(self.output_edit.text())),
-            )
-            self.saved_preset = self.service.save_preset(preset)
-        except (CdwError, ValueError) as exc:
-            details = exc.details if isinstance(exc, CdwError) else ""
-            CdwMessageBox.warning(self, LABELS["error"], f"{exc}\n{details}".strip())
+            self.saved_preset = self.service.save_preset(self._candidate())
+        except (CdwError, ValueError) as error:
+            self._show_error(error)
             return
         self.accept()
+
+    def _show_error(self, error):
+        details = error.details if isinstance(error, CdwError) else ""
+        self.feedback.setText(f"{error}\n{details}".strip())
+
+    def _preview(self):
+        if self._preview_busy:
+            return
+        try:
+            candidate = self._candidate(preview=True)
+        except (CdwError, ValueError) as error:
+            self._show_error(error)
+            return
+        self.feedback.clear()
+        self._preview_cancel = threading.Event()
+        self._preview_busy = True
+        self.preview_button.setEnabled(False)
+        self.stop_preview_button.setEnabled(True)
+        self.save_button.setEnabled(False)
+        self.preview_status.setText(tr("collection.preset.preview_running"))
+        self.tabs.setCurrentWidget(self.preview_page)
+        self._preview_executor = ThreadPoolExecutor(max_workers=self.PREVIEW_WORKERS, thread_name_prefix=self.PREVIEW_WORKER_NAME)
+        future = self._preview_executor.submit(self.service.preview, candidate, self._preview_cancel)
+
+        def completed(future):
+            try:
+                value = future.result()
+            except Exception as error:
+                self._preview_completed.emit(None, error)
+            else:
+                self._preview_completed.emit(value, None)
+        future.add_done_callback(completed)
+
+    def _cancel_preview(self):
+        self._preview_cancel.set()
+        self.stop_preview_button.setEnabled(False)
+
+    def _finish_preview(self, result, error):
+        self._preview_busy = False
+        if self._preview_executor is not None:
+            self._preview_executor.shutdown(wait=False)
+            self._preview_executor = None
+        self.preview_button.setEnabled(True)
+        self.stop_preview_button.setEnabled(False)
+        self.save_button.setEnabled(True)
+        if self._closing_after_preview:
+            super().reject()
+            return
+        if error is not None:
+            self._show_error(error)
+            self.preview_status.setText(tr("collection.preset.preview_failure"))
+            return
+        self.raw_output.setPlainText(result.stdout)
+        self.stderr_output.setPlainText(result.stderr)
+        self.preview_table.setColumnCount(len(result.columns))
+        self.preview_table.setRowCount(len(result.rows))
+        self.preview_table.setHorizontalHeaderLabels(result.columns)
+        for row, values in enumerate(result.rows):
+            for column, value in enumerate(values):
+                self.preview_table.setItem(row, column, QTableWidgetItem("" if value is None else str(value)))
+        self.preview_table.resizeColumnsToContents()
+        self.preview_status.setText(result.parse_error or tr("collection.preset.preview_done").format(
+            rows=result.total_rows, columns=len(result.columns), seconds=result.elapsed_seconds))
+        if result.total_rows > len(result.rows):
+            self.feedback.setText(tr("collection.preset.preview_capped").format(rows=result.total_rows, shown=len(result.rows)))
+        if result.parse_error:
+            self.preview_tabs.setCurrentWidget(self.raw_output)
+
+    def reject(self):
+        if self._preview_busy:
+            self._closing_after_preview = True
+            self._cancel_preview()
+            self.preview_status.setText(tr("collection.preset.preview_close_wait"))
+            return
+        super().reject()
+
+    def closeEvent(self, event):
+        if self._preview_busy:
+            self.reject()
+            event.ignore()
+        else:
+            super().closeEvent(event)

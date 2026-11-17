@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from cdw.i18n import tr
+
 from dataclasses import replace
 from datetime import date, datetime
 
@@ -12,7 +14,7 @@ from qtpy.QtWidgets import QHeaderView, QStyle, QStyleOptionHeader, QTreeWidgetI
 from cdw.domain.contracts import QueryResult
 from cdw.domain.filtering import (
     ColumnFilter, ColumnKind, FilterOperator, OPERAND_FREE_OPERATORS,
-    column_kind, compile_filter, distinct_values, is_unordered, operators_for, sort_key, typed_value,
+    compile_filter, distinct_values, is_unordered, operators_for, sort_key, typed_value,
 )
 from cdw.ui.design.icons import IconName
 from cdw.ui.design.spec import ButtonVariant, LayoutRole, TextRole
@@ -23,55 +25,16 @@ from cdw.ui.widgets import (
     CdwVBoxLayout, CdwWidget, StyledWidgetMixin,
 )
 
-HEADER_RESIZE_GRIP = 4
-HEADER_MINIMUM_CHARACTERS = 6
-SORT_SUFFIXES = {Qt.AscendingOrder: " ↑", Qt.DescendingOrder: " ↓"}
-OPERATOR_LABELS = {
-    FilterOperator.ANY: "조건 없음", FilterOperator.EQUAL: "같음", FilterOperator.NOT_EQUAL: "같지 않음",
-    FilterOperator.GREATER_EQUAL: "이상 (≥)", FilterOperator.LESS_EQUAL: "이하 (≤)",
-    FilterOperator.GREATER: "초과 (>)", FilterOperator.LESS: "미만 (<)", FilterOperator.BETWEEN: "사이 (양 끝 포함)",
-    FilterOperator.CONTAINS: "문자 포함", FilterOperator.STARTS_WITH: "문자로 시작", FilterOperator.ENDS_WITH: "문자로 끝남",
-    FilterOperator.REGEX: "정규 표현식", FilterOperator.IS_NULL: "NULL인 값", FilterOperator.NOT_NULL: "NULL이 아닌 값",
-    FilterOperator.IS_EMPTY: "빈 문자열",
-}
-KIND_LABELS = {
-    ColumnKind.NUMBER: "숫자", ColumnKind.DATE: "날짜", ColumnKind.DATETIME: "날짜·시각",
-    ColumnKind.TIME: "시각", ColumnKind.TEXT: "문자", ColumnKind.BOOLEAN: "논리값", ColumnKind.OTHER: "값 선택",
-}
-INPUT_LABELS = {
-    ColumnKind.NUMBER: ("숫자", "최솟값", "최댓값"),
-    ColumnKind.DATE: ("날짜", "시작 날짜", "끝 날짜"),
-    ColumnKind.DATETIME: ("날짜·시각", "시작 일시", "끝 일시"),
-    ColumnKind.TIME: ("시각", "시작 시각", "끝 시각"),
-    ColumnKind.TEXT: ("문자", "문자", "문자"),
-    ColumnKind.BOOLEAN: ("논리값", "논리값", "논리값"),
-    ColumnKind.OTHER: ("값", "값", "값"),
-}
-TEMPORAL_OPERATOR_LABELS = {
-    FilterOperator.GREATER_EQUAL: "이후 (포함, ≥)", FilterOperator.LESS_EQUAL: "이전 (포함, ≤)",
-    FilterOperator.GREATER: "이후 (제외, >)", FilterOperator.LESS: "이전 (제외, <)",
-}
-TEMPORAL_KINDS = frozenset((ColumnKind.DATE, ColumnKind.DATETIME, ColumnKind.TIME))
-BOOLEAN_CHOICES = (("참 (true)", "true"), ("거짓 (false)", "false"))
-KIND_HELP = {
-    ColumnKind.NUMBER: "숫자 크기를 비교합니다. 범위는 양 끝 값을 포함합니다.",
-    ColumnKind.DATE: "날짜 조건 또는 아래 연·월·일 목록으로 선택합니다.",
-    ColumnKind.DATETIME: "일시를 비교합니다. 날짜만 입력하면 해당 날짜의 00:00입니다.",
-    ColumnKind.TIME: "시각을 비교합니다. 소수 초와 시간대(+09:00 등)를 입력할 수 있습니다.",
-    ColumnKind.TEXT: "문자 포함·시작·끝 조건은 대소문자를 구분하지 않습니다. 정규식도 사용할 수 있습니다.",
-    ColumnKind.BOOLEAN: "참/거짓을 선택하거나 NULL 여부로 필터링합니다.",
-    ColumnKind.OTHER: "아래 값 목록에서 선택하거나 NULL 여부로 필터링합니다.",
-}
 TEXT = {
-    "title": "{name} · {kind} 필터", "ascending": "오름차순", "descending": "내림차순", "unsort": "정렬 해제",
-    "type": "자료형: {type}",
-    "condition": "조건", "first": "값 / 시작", "second": "끝", "search": "값 검색",
-    "all": "전체 값", "select": "검색 결과 선택", "deselect": "선택 해제",
-    "apply": "적용", "cancel": "취소", "reset": "필터 해제", "empty": "선택할 값이 없습니다.",
-    "date": "YYYY-MM-DD", "datetime": "YYYY-MM-DD HH:MM:SS", "time": "HH:MM:SS", "number": "숫자 입력",
-    "text": "값 입력", "regex": "정규 표현식 · (?i)로 대소문자 무시",
-    "tip": "열 필터/정렬 · Alt+↓",
-    "year": "{year}년", "month": "{month:02d}월", "day": "{day:02d}일",
+    "title": tr('ui.result_table.text.title'), "ascending": tr('ui.result_table.text.ascending'), "descending": tr('ui.result_table.text.descending'), "unsort": tr('ui.result_table.text.unsort'),
+    "type": tr('ui.result_table.text.type'),
+    "condition": tr('ui.result_table.text.condition'), "first": tr('ui.result_table.text.first'), "second": tr('ui.result_table.text.second'), "search": tr('ui.result_table.text.search'),
+    "all": tr('ui.result_table.text.all'), "select": tr('ui.result_table.text.select'), "deselect": tr('ui.result_table.text.deselect'),
+    "apply": tr('ui.result_table.text.apply'), "cancel": tr('common.cancel'), "reset": tr('ui.result_table.text.reset'), "empty": tr('ui.result_table.text.empty'),
+    "date": "YYYY-MM-DD", "datetime": "YYYY-MM-DD HH:MM:SS", "time": "HH:MM:SS", "number": tr('ui.result_table.text.number'),
+    "text": tr('ui.result_table.text.text'), "regex": tr('ui.result_table.text.regex'),
+    "tip": tr('ui.result_table.text.tip'),
+    "year": tr('ui.result_table.text.year'), "month": tr('ui.result_table.text.month'), "day": tr('ui.result_table.text.day'),
 }
 
 
@@ -95,7 +58,7 @@ class ResultFilterProxyModel(QSortFilterProxyModel):
         return self.sourceModel().result
 
     def kind(self, column: int) -> ColumnKind:
-        return column_kind(self.result.types[column])
+        return self.result.kinds[column]
 
     def filter_for(self, column: int) -> ColumnFilter:
         return self._filters.get(column, ColumnFilter())
@@ -156,6 +119,11 @@ class ResultFilterProxyModel(QSortFilterProxyModel):
 class CdwFilterHeader(StyledWidgetMixin, QHeaderView):
     """A common header boundary: native sizing plus a Heroicons filter button."""
 
+    HEADER_RESIZE_GRIP = 4
+    HEADER_MINIMUM_CHARACTERS = 6
+    SORT_SUFFIXES = {Qt.AscendingOrder: " ↑", Qt.DescendingOrder: " ↓"}
+
+
     filterRequested = Signal(int)
 
     def __init__(self, proxy: ResultFilterProxyModel, parent=None, *, theme=None):
@@ -172,7 +140,7 @@ class CdwFilterHeader(StyledWidgetMixin, QHeaderView):
 
     def apply_style(self, style):
         super().apply_style(style)
-        minimum = (QFontMetrics(self.font()).horizontalAdvance("M" * HEADER_MINIMUM_CHARACTERS)
+        minimum = (QFontMetrics(self.font()).horizontalAdvance("M" * CdwFilterHeader.HEADER_MINIMUM_CHARACTERS)
                    + style.metric("filter_header_button_width") + 2 * style.metric("padding_y"))
         self.setMinimumSectionSize(minimum)
         self.setMinimumHeight(max(style.metric("control_height"), QFontMetrics(self.font()).height() + 2 * style.metric("padding_y")))
@@ -185,7 +153,7 @@ class CdwFilterHeader(StyledWidgetMixin, QHeaderView):
             text = self._column_text(logical_index)
             # Reserve sort text before sorting so a full heading does not become
             # elided when the user clicks its sort/filter controls.
-            label_width = max(font.horizontalAdvance(text + suffix) for suffix in SORT_SUFFIXES.values())
+            label_width = max(font.horizontalAdvance(text + suffix) for suffix in CdwFilterHeader.SORT_SUFFIXES.values())
             left, right = self._text_insets()
             size.setWidth(max(size.width(), label_width + left + right))
         return size
@@ -196,7 +164,7 @@ class CdwFilterHeader(StyledWidgetMixin, QHeaderView):
     def _text_insets(self):
         style = self.theme.current
         padding = style.metric("padding_y")
-        return padding, style.metric("filter_header_button_width") + HEADER_RESIZE_GRIP + padding
+        return padding, style.metric("filter_header_button_width") + CdwFilterHeader.HEADER_RESIZE_GRIP + padding
 
     def text_rect(self, column: int) -> QRect:
         left, right = self._text_insets()
@@ -204,7 +172,7 @@ class CdwFilterHeader(StyledWidgetMixin, QHeaderView):
 
     def button_rect(self, column: int) -> QRect:
         width = self.theme.current.metric("filter_header_button_width")
-        return QRect(self.sectionViewportPosition(column) + self.sectionSize(column) - width - HEADER_RESIZE_GRIP,
+        return QRect(self.sectionViewportPosition(column) + self.sectionSize(column) - width - CdwFilterHeader.HEADER_RESIZE_GRIP,
                      0, width, self.height())
 
     def paintSection(self, painter, rect, logical_index):
@@ -226,7 +194,7 @@ class CdwFilterHeader(StyledWidgetMixin, QHeaderView):
         active = self.proxy.filter_for(logical_index).active
         text = self._column_text(logical_index)
         if self.proxy.sortColumn() == logical_index:
-            text += SORT_SUFFIXES[self.proxy.sortOrder()]
+            text += CdwFilterHeader.SORT_SUFFIXES[self.proxy.sortOrder()]
         text_rect = self.text_rect(logical_index)
         text_rect.setTop(rect.top())
         text_rect.setHeight(rect.height())
@@ -286,6 +254,44 @@ class CdwResultTableView(CdwTableView):
 class ColumnFilterPopup(CdwDialog):
     """Edits a pending filter; only Apply changes the result table."""
 
+    OPERATOR_LABELS = {
+        FilterOperator.ANY: tr('ui.result_table.operator_labels'), FilterOperator.EQUAL: tr('ui.result_table.operator_labels_2'), FilterOperator.NOT_EQUAL: tr('ui.result_table.operator_labels_3'),
+        FilterOperator.GREATER_EQUAL: tr('ui.result_table.operator_labels_4'), FilterOperator.LESS_EQUAL: tr('ui.result_table.operator_labels_5'),
+        FilterOperator.GREATER: tr('ui.result_table.operator_labels_6'), FilterOperator.LESS: tr('ui.result_table.operator_labels_7'), FilterOperator.BETWEEN: tr('ui.result_table.operator_labels_8'),
+        FilterOperator.CONTAINS: tr('ui.result_table.operator_labels_9'), FilterOperator.STARTS_WITH: tr('ui.result_table.operator_labels_10'), FilterOperator.ENDS_WITH: tr('ui.result_table.operator_labels_11'),
+        FilterOperator.REGEX: tr('ui.result_table.operator_labels_12'), FilterOperator.IS_NULL: tr('ui.result_table.operator_labels_13'), FilterOperator.NOT_NULL: tr('ui.result_table.operator_labels_14'),
+        FilterOperator.IS_EMPTY: tr('ui.result_table.operator_labels_15'),
+    }
+    KIND_LABELS = {
+        ColumnKind.NUMBER: tr('ui.result_table.kind_labels'), ColumnKind.DATE: tr('ui.result_table.kind_labels_2'), ColumnKind.DATETIME: tr('ui.result_table.kind_labels_3'),
+        ColumnKind.TIME: tr('ui.result_table.kind_labels_4'), ColumnKind.TEXT: tr('ui.result_table.kind_labels_5'), ColumnKind.BOOLEAN: tr('ui.result_table.kind_labels_6'), ColumnKind.OTHER: tr('ui.result_table.kind_labels_7'),
+    }
+    INPUT_LABELS = {
+        ColumnKind.NUMBER: (tr('ui.result_table.kind_labels'), tr('ui.result_table.input_labels'), tr('ui.result_table.input_labels_2')),
+        ColumnKind.DATE: (tr('ui.result_table.kind_labels_2'), tr('ui.result_table.input_labels_3'), tr('ui.result_table.input_labels_4')),
+        ColumnKind.DATETIME: (tr('ui.result_table.kind_labels_3'), tr('ui.result_table.input_labels_5'), tr('ui.result_table.input_labels_6')),
+        ColumnKind.TIME: (tr('ui.result_table.kind_labels_4'), tr('ui.pages.home.history_columns_2'), tr('ui.result_table.input_labels_7')),
+        ColumnKind.TEXT: (tr('ui.result_table.kind_labels_5'), tr('ui.result_table.kind_labels_5'), tr('ui.result_table.kind_labels_5')),
+        ColumnKind.BOOLEAN: (tr('ui.result_table.kind_labels_6'), tr('ui.result_table.kind_labels_6'), tr('ui.result_table.kind_labels_6')),
+        ColumnKind.OTHER: (tr('ui.result_table.input_labels_8'), tr('ui.result_table.input_labels_8'), tr('ui.result_table.input_labels_8')),
+    }
+    TEMPORAL_OPERATOR_LABELS = {
+        FilterOperator.GREATER_EQUAL: tr('ui.result_table.temporal_operator_labels'), FilterOperator.LESS_EQUAL: tr('ui.result_table.temporal_operator_labels_2'),
+        FilterOperator.GREATER: tr('ui.result_table.temporal_operator_labels_3'), FilterOperator.LESS: tr('ui.result_table.temporal_operator_labels_4'),
+    }
+    TEMPORAL_KINDS = frozenset((ColumnKind.DATE, ColumnKind.DATETIME, ColumnKind.TIME))
+    BOOLEAN_CHOICES = ((tr('ui.result_table.boolean_choices'), "true"), (tr('ui.result_table.boolean_choices_2'), "false"))
+    KIND_HELP = {
+        ColumnKind.NUMBER: tr('ui.result_table.kind_help'),
+        ColumnKind.DATE: tr('ui.result_table.kind_help_2'),
+        ColumnKind.DATETIME: tr('ui.result_table.kind_help_3'),
+        ColumnKind.TIME: tr('ui.result_table.kind_help_4'),
+        ColumnKind.TEXT: tr('ui.result_table.kind_help_5'),
+        ColumnKind.BOOLEAN: tr('ui.result_table.kind_help_6'),
+        ColumnKind.OTHER: tr('ui.result_table.kind_help_7'),
+    }
+
+
     def __init__(self, proxy: ResultFilterProxyModel, column: int, parent=None, *, theme=None):
         super().__init__(parent, theme=theme)
         self.setWindowFlags(Qt.Popup)
@@ -298,7 +304,7 @@ class ColumnFilterPopup(CdwDialog):
         self._leaves = []
         self._all_keys = frozenset(value.key for value in self.values)
         self._initial_keys = self._all_keys if self.initial_filter.selected_keys is None else self.initial_filter.selected_keys
-        self.setWindowTitle(TEXT["title"].format(name=proxy.result.columns[column], kind=KIND_LABELS[self.kind]))
+        self.setWindowTitle(TEXT["title"].format(name=proxy.result.columns[column], kind=ColumnFilterPopup.KIND_LABELS[self.kind]))
         outer = CdwVBoxLayout(self, role=LayoutRole.DIALOG, theme=self.theme)
         heading = CdwLabel(self.windowTitle(), role=TextRole.SECTION_HEADING, theme=self.theme)
         heading.setWordWrap(True)
@@ -319,27 +325,27 @@ class ColumnFilterPopup(CdwDialog):
 
         self.scroll = CdwScrollArea(theme=self.theme)
         body = CdwWidget(theme=self.theme)
-        content = CdwVBoxLayout(body, role=LayoutRole.FLUSH, theme=self.theme)
+        content = CdwVBoxLayout(body, role=LayoutRole.CONTENT, theme=self.theme)
         self.scroll.setWidget(body)
         outer.addWidget(self.scroll, 1)
-        self.condition_help = CdwLabel(KIND_HELP[self.kind], role=TextRole.MUTED, theme=self.theme)
+        self.condition_help = CdwLabel(ColumnFilterPopup.KIND_HELP[self.kind], role=TextRole.MUTED, theme=self.theme)
         self.condition_help.setWordWrap(True)
         content.addWidget(self.condition_help)
-        self.form = CdwFormLayout(role=LayoutRole.ROW, theme=self.theme)
+        self.form = CdwFormLayout(role=LayoutRole.FORM, theme=self.theme)
         self.operator_combo = CdwComboBox(theme=self.theme)
         for operator in operators_for(self.kind):
-            label = (TEMPORAL_OPERATOR_LABELS.get(operator, OPERATOR_LABELS[operator])
-                     if self.kind in TEMPORAL_KINDS else OPERATOR_LABELS[operator])
+            label = (ColumnFilterPopup.TEMPORAL_OPERATOR_LABELS.get(operator, ColumnFilterPopup.OPERATOR_LABELS[operator])
+                     if self.kind in ColumnFilterPopup.TEMPORAL_KINDS else ColumnFilterPopup.OPERATOR_LABELS[operator])
             self.operator_combo.addItem(label, operator.value)
         self.lower_edit = CdwLineEdit(theme=self.theme)
         self.upper_edit = CdwLineEdit(theme=self.theme)
         self.boolean_combo = CdwComboBox(theme=self.theme)
-        for label, value in BOOLEAN_CHOICES:
+        for label, value in ColumnFilterPopup.BOOLEAN_CHOICES:
             self.boolean_combo.addItem(label, value)
         self.form.addRow(TEXT["condition"], self.operator_combo)
         self.form.addRow(TEXT["first"], self.lower_edit)
         self.form.addRow(TEXT["second"], self.upper_edit)
-        self.form.addRow(KIND_LABELS[ColumnKind.BOOLEAN], self.boolean_combo)
+        self.form.addRow(ColumnFilterPopup.KIND_LABELS[ColumnKind.BOOLEAN], self.boolean_combo)
         content.addLayout(self.form)
         self.search_edit = CdwLineEdit(theme=self.theme)
         self.search_edit.setPlaceholderText(TEXT["search"])
@@ -439,8 +445,8 @@ class ColumnFilterPopup(CdwDialog):
         self.form.setRowVisible(self.lower_edit, needs_operand and self.kind is not ColumnKind.BOOLEAN)
         self.form.setRowVisible(self.upper_edit, operator is FilterOperator.BETWEEN)
         self.form.setRowVisible(self.boolean_combo, needs_operand and self.kind is ColumnKind.BOOLEAN)
-        single, lower, upper = INPUT_LABELS[self.kind]
-        label = OPERATOR_LABELS[operator] if operator is FilterOperator.REGEX else (
+        single, lower, upper = ColumnFilterPopup.INPUT_LABELS[self.kind]
+        label = ColumnFilterPopup.OPERATOR_LABELS[operator] if operator is FilterOperator.REGEX else (
             lower if operator is FilterOperator.BETWEEN else single)
         self.form.labelForField(self.lower_edit).setText(label)
         self.form.labelForField(self.upper_edit).setText(upper)

@@ -2,38 +2,41 @@
 
 from __future__ import annotations
 
+from cdw.i18n import tr
+
 import codecs
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
 from cdw.branding import APP_NAME
+from cdw.domain.filtering import ColumnKind
+from cdw.domain.parsing import ParseSpec, validate_csv_delimiter
 
 TABLE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
-ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 MEMORY_STORAGE_KEY = ":memory:"
 SOURCE_SCHEMA = "source"
 VALIDATION_MESSAGES = {
-    "execution": "실행 시간과 출력 크기 제한은 양수여야 합니다. 출력 크기는 정수 바이트입니다.",
+    "execution": tr('domain.contracts.validation_messages.execution'),
     "preview": "preview_rows must be a positive integer",
-    "storage_type": "저장 위치의 형식이 올바르지 않습니다.",
-    "absolute_database": "DB 파일은 절대 경로로 지정해 주세요.",
-    "memory_path": "메모리 저장에는 파일 경로를 지정하지 않습니다.",
-    "strings": "프리셋의 문자열 필드를 확인해 주세요.",
-    "modes": "출력 형식 또는 저장 방식을 확인해 주세요.",
-    "policies": "저장 위치 또는 실행 제한을 확인해 주세요.",
-    "containers": "인자는 목록, 환경변수는 객체여야 합니다.",
-    "directory_type": "작업 디렉터리 형식을 확인해 주세요.",
-    "required": "이름과 실행 파일을 입력해 주세요.",
-    "table": "테이블 이름: 영문 소문자·숫자·밑줄, 최대 63자. 숫자로 시작할 수 없습니다.",
-    "delimiter": "CSV 구분자는 한 바이트 문자여야 합니다.",
-    "encoding": "알 수 없는 인코딩: {encoding}",
-    "absolute_directory": "작업 디렉터리는 절대 경로로 지정해 주세요.",
-    "arguments": "인자는 문자열이어야 하며 NUL 문자를 포함할 수 없습니다.",
-    "environment": "환경변수 이름 또는 값을 확인해 주세요.",
+    "storage_type": tr('domain.contracts.validation_messages.storage_type'),
+    "absolute_database": tr('domain.contracts.validation_messages.absolute_database'),
+    "memory_path": tr('domain.contracts.validation_messages.memory_path'),
+    "strings": tr('domain.contracts.validation_messages.strings'),
+    "modes": tr('domain.contracts.validation_messages.modes'),
+    "policies": tr('domain.contracts.validation_messages.policies'),
+    "containers": tr('domain.contracts.validation_messages.containers'),
+    "directory_type": tr('domain.contracts.validation_messages.directory_type'),
+    "required": tr('domain.contracts.validation_messages.required'),
+    "table": tr('domain.contracts.validation_messages.table'),
+    "delimiter": tr('domain.contracts.validation_messages.delimiter'),
+    "encoding": tr('domain.contracts.validation_messages.encoding'),
+    "absolute_directory": tr('domain.contracts.validation_messages.absolute_directory'),
+    "arguments": tr('domain.contracts.validation_messages.arguments'),
+    "environment": tr('domain.contracts.validation_messages.environment'),
 }
 
 
@@ -52,6 +55,11 @@ class OutputFormat(StrEnum):
 class WriteMode(StrEnum):
     REPLACE = "replace"
     APPEND = "append"
+
+
+class CommandMode(StrEnum):
+    DIRECT = "direct"
+    SHELL = "shell"
 
 
 class RunState(StrEnum):
@@ -82,30 +90,30 @@ class ErrorCode(StrEnum):
     INTERNAL = "internal"
 
 
-ERROR_MESSAGES = {
-    ErrorCode.INVALID_PRESET: "프리셋 설정을 확인해 주세요.",
-    ErrorCode.PRESET_CONFLICT: "같은 이름 또는 같은 저장 대상의 프리셋이 있습니다.",
-    ErrorCode.NOT_FOUND: "대상을 찾을 수 없습니다.",
-    ErrorCode.COMMAND_FAILED: "명령어 실행에 실패했습니다.",
-    ErrorCode.TIMEOUT: "명령어 실행 시간이 제한을 초과했습니다.",
-    ErrorCode.CANCELLED: "실행을 취소했습니다.",
-    ErrorCode.OUTPUT_LIMIT: "명령어 출력 크기가 제한을 초과했습니다.",
-    ErrorCode.PARSE_FAILED: "명령어 출력을 표로 변환하지 못했습니다.",
-    ErrorCode.EMPTY_OUTPUT: "빈 데이터는 저장하지 않습니다. 기존 데이터는 유지됩니다.",
-    ErrorCode.SCHEMA_MISMATCH: "추가할 데이터의 컬럼 또는 자료형이 기존 테이블과 다릅니다.",
-    ErrorCode.STORAGE_FAILED: "데이터 저장에 실패했습니다.",
-    ErrorCode.INVALID_QUERY: "SQL 조회는 하나의 SELECT 문만 지원합니다.",
-    ErrorCode.QUERY_FAILED: "SQL 조회에 실패했습니다.",
-    ErrorCode.PROFILE_BUSY: f"다른 {APP_NAME} 프로세스에서 이 작업 환경을 사용하고 있습니다.",
-    ErrorCode.INTERNAL: "처리 중 오류가 발생했습니다.",
-}
-
-
 class CdwError(Exception):
+
+    ERROR_MESSAGES = {
+        ErrorCode.INVALID_PRESET: tr('domain.contracts.error_messages'),
+        ErrorCode.PRESET_CONFLICT: tr('domain.contracts.error_messages_2'),
+        ErrorCode.NOT_FOUND: tr('domain.contracts.error_messages_3'),
+        ErrorCode.COMMAND_FAILED: tr('domain.contracts.error_messages_4'),
+        ErrorCode.TIMEOUT: tr('domain.contracts.error_messages_5'),
+        ErrorCode.CANCELLED: tr('domain.contracts.error_messages_6'),
+        ErrorCode.OUTPUT_LIMIT: tr('domain.contracts.error_messages_7'),
+        ErrorCode.PARSE_FAILED: tr('domain.contracts.error_messages_8'),
+        ErrorCode.EMPTY_OUTPUT: tr('domain.contracts.error_messages_9'),
+        ErrorCode.SCHEMA_MISMATCH: tr('domain.contracts.error_messages_10'),
+        ErrorCode.STORAGE_FAILED: tr('domain.contracts.error_messages_11'),
+        ErrorCode.INVALID_QUERY: tr('domain.contracts.error_messages_12'),
+        ErrorCode.QUERY_FAILED: tr('domain.contracts.error_messages_13'),
+        ErrorCode.PROFILE_BUSY: tr('domain.contracts.error_messages_14').format(app_name=APP_NAME),
+        ErrorCode.INTERNAL: tr('domain.contracts.error_messages_15'),
+    }
+
     def __init__(self, code: ErrorCode, details: str = "") -> None:
         self.code = code
         self.details = details
-        super().__init__(ERROR_MESSAGES[code])
+        super().__init__(CdwError.ERROR_MESSAGES[code])
 
 
 @dataclass(frozen=True)
@@ -151,6 +159,60 @@ class StorageTarget:
 
 
 @dataclass(frozen=True)
+class CommandSpec:
+    """Process input, independent of collection, storage and task input formats."""
+    executable: str
+    arguments: tuple[str, ...]
+    working_directory: str | None
+    environment: Mapping[str, str]
+    execution: ExecutionPolicy
+    encoding: str
+    mode: CommandMode = CommandMode.DIRECT
+    script: str = ""
+
+    def __post_init__(self):
+        if any(not isinstance(value, str) or "\0" in value for value in (self.executable, self.encoding)):
+            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["strings"])
+        if not self.executable.strip():
+            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["required"])
+        if not isinstance(self.mode, CommandMode) or not isinstance(self.script, str) or "\0" in self.script:
+            raise CdwError(ErrorCode.INVALID_PRESET, tr("collection.command.invalid_mode"))
+        if self.mode is CommandMode.SHELL:
+            if not self.script.strip() or self.arguments:
+                raise CdwError(ErrorCode.INVALID_PRESET, tr("collection.command.invalid_script"))
+        elif self.script:
+            raise CdwError(ErrorCode.INVALID_PRESET, tr("collection.command.direct_script"))
+        if not isinstance(self.execution, ExecutionPolicy):
+            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["policies"])
+        if not isinstance(self.arguments, (tuple, list)) or not isinstance(self.environment, Mapping):
+            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["containers"])
+        if self.working_directory is not None and (not isinstance(self.working_directory, str) or "\0" in self.working_directory):
+            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["directory_type"])
+        if self.working_directory and not Path(self.working_directory).is_absolute():
+            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["absolute_directory"])
+        if any(not isinstance(arg, str) or "\0" in arg for arg in self.arguments):
+            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["arguments"])
+        for key, value in self.environment.items():
+            if (not isinstance(key, str) or not key or "=" in key or "\0" in key
+                    or not isinstance(value, str) or "\0" in value):
+                raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["environment"])
+        try:
+            codecs.lookup(self.encoding)
+        except LookupError as exc:
+            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["encoding"].format(encoding=self.encoding)) from exc
+        object.__setattr__(self, "arguments", tuple(self.arguments))
+        object.__setattr__(self, "environment", MappingProxyType(dict(self.environment)))
+
+
+def validate_definition_identity(identifier: str, name: str) -> str:
+    if any(not isinstance(value, str) or "\0" in value for value in (identifier, name)):
+        raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["strings"])
+    if not identifier or not name.strip():
+        raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["required"])
+    return name.strip()
+
+
+@dataclass(frozen=True)
 class Preset:
     id: str
     name: str
@@ -165,39 +227,36 @@ class Preset:
     table_name: str
     write_mode: WriteMode
     execution: ExecutionPolicy
+    command_mode: CommandMode = CommandMode.DIRECT
+    shell_script: str = ""
+    parsing: ParseSpec = field(default_factory=ParseSpec)
 
-    def __post_init__(self) -> None:
-        strings = (self.id, self.name, self.executable, self.encoding, self.csv_delimiter, self.table_name)
-        if any(not isinstance(value, str) or "\0" in value for value in strings):
+    def __post_init__(self):
+        name = validate_definition_identity(self.id, self.name)
+        command = self.command
+        if any(not isinstance(value, str) or "\0" in value for value in (self.csv_delimiter, self.table_name)):
             raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["strings"])
         if not isinstance(self.output_format, OutputFormat) or not isinstance(self.write_mode, WriteMode):
             raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["modes"])
-        if not isinstance(self.storage, StorageTarget) or not isinstance(self.execution, ExecutionPolicy):
-            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["policies"])
-        if not isinstance(self.arguments, (tuple, list)) or not isinstance(self.environment, Mapping):
-            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["containers"])
-        if self.working_directory is not None and (not isinstance(self.working_directory, str) or "\0" in self.working_directory):
-            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["directory_type"])
-        if not self.id or not self.name.strip() or not self.executable.strip():
-            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["required"])
+        if not isinstance(self.storage, StorageTarget):
+            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["storage_type"])
         if not TABLE_NAME_PATTERN.fullmatch(self.table_name):
             raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["table"])
-        if len(self.csv_delimiter.encode("utf-8")) != 1 or self.csv_delimiter in "\r\n":
-            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["delimiter"])
+        if not isinstance(self.parsing, ParseSpec):
+            raise CdwError(ErrorCode.INVALID_PRESET, tr("collection.parse.invalid_spec"))
         try:
-            codecs.lookup(self.encoding)
-        except LookupError as exc:
-            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["encoding"].format(encoding=self.encoding)) from exc
-        if self.working_directory and not Path(self.working_directory).is_absolute():
-            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["absolute_directory"])
-        if any(not isinstance(arg, str) or "\0" in arg for arg in self.arguments):
-            raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["arguments"])
-        for key, value in self.environment.items():
-            if not isinstance(key, str) or not ENVIRONMENT_NAME_PATTERN.fullmatch(key) or not isinstance(value, str) or "\0" in value:
-                raise CdwError(ErrorCode.INVALID_PRESET, VALIDATION_MESSAGES["environment"])
-        object.__setattr__(self, "name", self.name.strip())
-        object.__setattr__(self, "arguments", tuple(self.arguments))
-        object.__setattr__(self, "environment", MappingProxyType(dict(self.environment)))
+            validate_csv_delimiter(self.csv_delimiter)
+        except ValueError as exc:
+            raise CdwError(ErrorCode.INVALID_PRESET, str(exc)) from exc
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "arguments", command.arguments)
+        object.__setattr__(self, "environment", command.environment)
+
+    @property
+    def command(self) -> CommandSpec:
+        # A derived immutable view; preset fields remain the only stored source.
+        return CommandSpec(self.executable, self.arguments, self.working_directory,
+                           self.environment, self.execution, self.encoding, self.command_mode, self.shell_script)
 
     @property
     def qualified_table(self) -> str:
@@ -225,6 +284,19 @@ class CollectionResult:
     total_rows: int
     elapsed_seconds: float
     stderr: str
+    finished_at: str
+
+
+@dataclass(frozen=True)
+class CollectionPreview:
+    stdout: str
+    stderr: str
+    columns: tuple[str, ...]
+    types: tuple[str, ...]
+    rows: tuple[tuple[Any, ...], ...]
+    total_rows: int
+    elapsed_seconds: float
+    parse_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -234,6 +306,13 @@ class QueryResult:
     rows: tuple[tuple[Any, ...], ...]
     truncated: bool
     elapsed_seconds: float
+    kinds: tuple[ColumnKind, ...]
+
+    def __post_init__(self):
+        if len(self.columns) != len(self.types) or len(self.columns) != len(self.kinds):
+            raise ValueError(tr('domain.contracts.queryresult.post_init'))
+        if any(not isinstance(kind, ColumnKind) for kind in self.kinds):
+            raise ValueError(tr('domain.contracts.queryresult.post_init_2'))
 
 
 @dataclass(frozen=True)

@@ -2,11 +2,12 @@
 
 import json
 import os
+import shlex
 import sys
 import threading
 import time
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -18,10 +19,11 @@ from qtpy.QtWidgets import QApplication
 
 from cdw.application.tasks import TaskService
 from cdw.config import build_config
-from cdw.domain.contracts import CdwError, ErrorCode, ExecutionPolicy, QueryResult
-from cdw.domain.tasks import TaskDefinition, TaskInputFormat
+from cdw.domain.contracts import CdwError, CommandMode, ErrorCode, ExecutionPolicy, QueryResult
+from cdw.domain.filtering import ColumnKind
+from cdw.domain.tasks import TaskDefinition, TaskInputContext, TaskInputFormat, migrate_task_document_v1
 from cdw.ui.task_dialog import TaskDialog
-from cdw.ui.tasks_page import TasksPage
+from cdw.ui.pages.tasks import TasksPage
 
 
 def definition(program="import sys; print(sys.argv[1])", **changes):
@@ -34,7 +36,7 @@ def definition(program="import sys; print(sys.argv[1])", **changes):
 
 
 def table(rows=(("서울", 2), ("부산", None))):
-    return QueryResult(("name", "count"), ("VARCHAR", "BIGINT"), rows, False, 0)
+    return QueryResult(("name", "count"), ("VARCHAR", "BIGINT"), rows, False, 0, (ColumnKind.TEXT, ColumnKind.NUMBER))
 
 
 def test_task_persistence_update_delete_and_duplicate_name(tmp_path):
@@ -60,12 +62,18 @@ def test_json_task_receives_typed_full_table_and_input_is_removed(tmp_path):
     program = "import json,sys,os; p=sys.argv[1]; data=json.load(open(p,encoding='utf-8')); print(json.dumps({'path':p,'input':data,'env':os.environ['TASK_MODE']}))"
     task = service.save_task(definition(program, environment={"TASK_MODE": "received"}))
     result = QueryResult(("id", "amount", "day", "blob"), ("INTEGER", "DECIMAL(38,4)", "DATE", "BLOB"),
-                         tuple((i, Decimal("1000000000000000.0001"), date(2026, 11, 14), b"\x00\xff") for i in range(650)), False, 0)
-    outcome = service.run_task(task.id, result)
+                         tuple((i, Decimal("1000000000000000.0001"), date(2026, 11, 14), b"\x00\xff") for i in range(650)), False, 0, (ColumnKind.NUMBER, ColumnKind.NUMBER, ColumnKind.DATE, ColumnKind.OTHER))
+    context = TaskInputContext("collection-run-123", "sales", "2026-11-17T01:02:03+00:00")
+    outcome = service.run_task(task.id, result, context=context)
     received = json.loads(outcome.stdout)
     assert received["env"] == "received"
     assert received["input"]["columns"] == list(result.columns)
-    assert received["input"]["types"] == list(result.types)
+    assert received["input"]["protocol"] == "cdw.table"
+    assert received["input"]["version"] == 1
+    assert received["input"]["run_id"] == context.run_id
+    assert received["input"]["table_name"] == context.table_name
+    assert received["input"]["collected_at"] == context.collected_at
+    assert received["input"]["types"] == ["integer", "decimal", "date", "binary"]
     assert len(received["input"]["rows"]) == 650
     assert received["input"]["rows"][0] == [0, "1000000000000000.0001", "2026-11-14", {"$binary": "AP8="}]
     assert not Path(received["path"]).exists()
@@ -90,7 +98,87 @@ def test_task_csv_uses_shared_export_delimiter_contract(tmp_path):
     task = service.save_task(definition(program, input_format=TaskInputFormat.CSV, csv_delimiter="│"))
     assert json.loads(service.run_task(task.id, table()).stdout) == [["name", "count"], ["서울", "2"], ["부산", ""]]
     with pytest.raises(ValueError):
-        definition(csv_delimiter='"')
+        definition(input_format=TaskInputFormat.CSV, csv_delimiter='"')
+
+
+def test_input_none_runs_without_a_table_and_uses_saved_environment(tmp_path, monkeypatch):
+    service = TaskService(build_config(tmp_path))
+    monkeypatch.setenv("CDW_TASK_UNSAVED", "must-not-leak")
+    program = "import json,os; print(json.dumps({'saved':os.environ.get('CDW_TASK_SAVED'),'unsaved':os.environ.get('CDW_TASK_UNSAVED')}))"
+    task = service.save_task(definition(arguments=("-c", program), input_format=TaskInputFormat.NONE,
+                                        environment={"CDW_TASK_SAVED": "snapshot"}))
+    outcome = service.run_task(task.id)
+    assert json.loads(outcome.stdout) == {"saved": "snapshot", "unsaved": None}
+    assert outcome.return_code == 0
+
+
+def test_captured_task_definition_is_unchanged_by_later_edits(tmp_path):
+    service = TaskService(build_config(tmp_path))
+    captured = service.save_task(definition(arguments=("-c", "print('captured')"),
+                                            input_format=TaskInputFormat.NONE))
+    service.save_task(replace(captured, arguments=("-c", "print('edited')")))
+    assert service.run_definition(captured).stdout.strip() == "captured"
+    assert service.run_task(captured.id).stdout.strip() == "edited"
+
+
+@pytest.mark.parametrize("input_format", [TaskInputFormat.JSON, TaskInputFormat.CSV])
+def test_file_input_requires_a_table_before_starting_the_process(tmp_path, input_format):
+    service = TaskService(build_config(tmp_path))
+    task = service.save_task(definition(input_format=input_format))
+    with pytest.raises(CdwError) as error:
+        service.run_task(task.id)
+    assert error.value.code is ErrorCode.INVALID_QUERY
+
+
+def test_none_input_rejects_reserved_file_placeholder():
+    with pytest.raises(ValueError):
+        definition(input_format=TaskInputFormat.NONE)
+
+
+def test_task_contract_roundtrip_and_explicit_v1_migration():
+    task = definition(environment={"SAVED": "custom"})
+    assert TaskDefinition.from_dict(task.to_dict()) == task
+    legacy = task.to_dict()
+    legacy["version"] = 1
+    del legacy["command_mode"]
+    del legacy["script"]
+    with pytest.raises(ValueError):
+        TaskDefinition.from_dict(legacy)
+    upgraded = migrate_task_document_v1(legacy, {"PATH": "/usr/bin", "SAVED": "baseline"})
+    restored = TaskDefinition.from_dict(upgraded)
+    assert restored.environment == {"PATH": "/usr/bin", "SAVED": "custom"}
+    assert restored.command_mode is CommandMode.DIRECT
+    assert legacy["environment"] == {"SAVED": "custom"}
+
+
+def test_shell_task_input_is_one_quoted_argument():
+    task = definition(executable="/bin/bash", arguments=(), command_mode=CommandMode.SHELL,
+                      script="/usr/bin/python3 receiver.py --input {input}")
+    command = task.command_for_input("/tmp/data with spaces/'quoted'; touch unexpected.json")
+    assert shlex.split(command.script) == ["/usr/bin/python3", "receiver.py", "--input",
+                                           "/tmp/data with spaces/'quoted'; touch unexpected.json"]
+
+
+@pytest.mark.parametrize("script", ['cat "{input}"', "cat '{input}'", r"cat \{input}"])
+def test_shell_task_rejects_quoted_or_escaped_input_placeholder(script):
+    with pytest.raises(ValueError):
+        definition(executable="/bin/bash", arguments=(), command_mode=CommandMode.SHELL, script=script)
+
+
+def test_protocol_preserves_null_precision_timezone_and_nonfinite_values(tmp_path):
+    service = TaskService(build_config(tmp_path))
+    task = service.save_task(definition("import sys; print(open(sys.argv[1],encoding='utf-8').read())"))
+    snapshot = QueryResult(
+        ("large", "empty", "instant", "infinite", "nested"),
+        ("HUGEINT", "VARCHAR", "TIMESTAMP WITH TIME ZONE", "DOUBLE", "INTEGER[]"),
+        ((2**100, None, datetime(2026, 11, 17, 1, 2, 3, tzinfo=timezone.utc), float("inf"), [1, None]),),
+        False, 0, (ColumnKind.NUMBER, ColumnKind.TEXT, ColumnKind.DATETIME, ColumnKind.NUMBER, ColumnKind.OTHER),
+    )
+    document = json.loads(service.run_task(task.id, snapshot).stdout)
+    assert document["types"] == ["integer", "string", "datetime", "float", "json"]
+    assert document["rows"] == [[2**100, None, "2026-11-17T01:02:03+00:00", "Infinity", [1, None]]]
+    assert document["run_id"]
+    assert datetime.fromisoformat(document["collected_at"]).tzinfo is not None
 
 
 @pytest.mark.parametrize("arguments", [("--input",), (), (None, "{input}")])
@@ -175,8 +263,9 @@ def test_tasks_page_registers_and_edits_without_executing(app, tmp_path):
         try:
             assert isinstance(dialog, TaskDialog)
             dialog.name_edit.setText("입력 확인")
-            dialog.executable_edit.setText(sys.executable)
-            dialog.arguments_edit.setPlainText("-c\nimport sys; print(sys.argv[1])\n{input}")
+            dialog.command_editor.executable_edit.setText(sys.executable)
+            dialog.command_editor.arguments_edit.setPlainText("-c\nprint('ready')")
+            dialog.environment_editor.load_environment({"TASK_MODE": "saved"})
             QTest.mouseClick(dialog.save_button, Qt.LeftButton)
         except Exception as exc:
             failures.append(exc)
@@ -189,6 +278,8 @@ def test_tasks_page_registers_and_edits_without_executing(app, tmp_path):
         assert not failures, failures
         assert page.table.rowCount() == 1
         assert service.list_tasks()[0].name == "입력 확인"
+        assert service.list_tasks()[0].input_format is TaskInputFormat.NONE
+        assert service.list_tasks()[0].environment == {"TASK_MODE": "saved"}
         page.table.selectRow(0)
 
         def edit():
@@ -219,12 +310,47 @@ def test_task_editor_csv_input_and_invalid_settings(app, tmp_path):
         dialog.format_combo.setCurrentIndex(dialog.format_combo.findData(TaskInputFormat.CSV))
         assert dialog.delimiter_edit.isEnabled()
         dialog.name_edit.setText("검증")
-        dialog.executable_edit.setText(sys.executable)
-        dialog.arguments_edit.setPlainText("-c\nprint('no input')")
+        dialog.command_editor.executable_edit.setText(sys.executable)
+        dialog.command_editor.arguments_edit.setPlainText("-c\nprint('no input')")
         QTest.mouseClick(dialog.save_button, Qt.LeftButton)
         assert dialog.isVisible()
         assert dialog.saved_task is None
         assert "{input}" in dialog.feedback.text()
     finally:
         dialog.close()
+        app.processEvents()
+
+
+def test_tasks_page_only_runs_input_none_tasks(app, tmp_path):
+    service = TaskService(build_config(tmp_path))
+    file_task = service.save_task(definition(name="A file"))
+    direct_task = service.save_task(definition(id="direct-task", name="B direct",
+                                               arguments=("-c", "print('ready')"),
+                                               input_format=TaskInputFormat.NONE))
+
+    class Controller:
+        def __init__(self):
+            self.calls = []
+
+        def run_task(self, task_id, result=None):
+            self.calls.append((task_id, result))
+            return True
+
+    controller = Controller()
+    page = TasksPage(service, controller=controller)
+    page.show()
+    app.processEvents()
+    try:
+        page.table.selectRow(next(i for i in range(page.table.rowCount())
+                                  if page.table.item(i, 0).text() == file_task.name))
+        assert not page.run_button.isEnabled()
+        page.table.selectRow(next(i for i in range(page.table.rowCount())
+                                  if page.table.item(i, 0).text() == direct_task.name))
+        assert page.run_button.isEnabled()
+        QTest.mouseClick(page.run_button, Qt.LeftButton)
+        assert controller.calls == [(direct_task.id, None)]
+        page.set_busy(True)
+        assert not page.run_button.isEnabled()
+    finally:
+        page.close()
         app.processEvents()

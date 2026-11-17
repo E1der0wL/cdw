@@ -1,5 +1,7 @@
 """Dialogs for choosing how the active result table is used."""
 
+from cdw.i18n import tr
+
 import re
 from pathlib import Path
 
@@ -12,25 +14,20 @@ from cdw.ui.widgets import (
     CdwFormLayout, CdwLabel, CdwLineEdit, CdwMessageBox, CdwVBoxLayout,
 )
 
-EXPORT_FILTERS = {
-    ExportFormat.CSV: "CSV (*.csv)", ExportFormat.JSON: "JSON (*.json)",
-    ExportFormat.DUCKDB: "DuckDB (*.duckdb)",
-}
-EXPORT_EXTENSIONS = {ExportFormat.CSV: ".csv", ExportFormat.JSON: ".json", ExportFormat.DUCKDB: ".duckdb"}
 FILENAME_UNSAFE = re.compile(r"[^a-zA-Z0-9_]+")
 DEFAULT_RESULT_NAME = "query_result"
 TEXT = {
-    "export_title": "조회 결과 내보내기", "file": "저장 파일", "choose": "찾기",
-    "delimiter": "CSV 구분자", "export": "내보내기", "cancel": "취소",
-    "delimiter_help": "탭 구분자는 \\t로 입력하세요.",
-    "scope": "현재 탭의 필터·정렬을 적용한 전체 행을 사용합니다. 선택한 셀만 내보내지는 않습니다.",
-    "path_required": "저장할 파일 경로를 입력해 주세요.",
-    "path_invalid": "파일 경로를 확인해 주세요: {details}",
-    "replace_title": "파일 덮어쓰기", "replace_body": "다음 파일을 덮어쓸까요?\n{path}",
-    "save_title": "메모리 테이블 저장", "name": "테이블 이름", "save": "저장",
-    "memory_help": "memory.<이름>으로 SQL에서 조회할 수 있습니다. 앱을 종료하면 사라집니다.\n같은 이름의 기존 테이블은 덮어쓰지 않습니다.",
-    "task_title": "조회 결과로 작업 실행", "task": "작업", "run": "실행",
-    "task_help": "현재 탭의 필터·정렬 결과를 등록된 작업의 입력 파일로 전달합니다.",
+    "export_title": tr('ui.result_actions.text.export_title'), "file": tr('ui.result_actions.text.file'), "choose": tr('ui.result_actions.text.choose'),
+    "delimiter": tr('ui.preset_dialog.labels.delimiter'), "export": tr('ui.result_actions.text.export'), "cancel": tr('common.cancel'),
+    "delimiter_help": tr('ui.result_actions.text.delimiter_help'),
+    "scope": tr('ui.result_actions.text.scope'),
+    "path_required": tr('ui.result_actions.text.path_required'),
+    "path_invalid": tr('ui.result_actions.text.path_invalid'),
+    "replace_title": tr('ui.result_actions.text.replace_title'), "replace_body": tr('ui.result_actions.text.replace_body'),
+    "save_title": tr('ui.result_actions.text.save_title'), "name": tr('ui.preset_dialog.labels.table'), "save": tr('ui.pages.sql.text.save_table'),
+    "memory_help": tr('ui.result_actions.text.memory_help'),
+    "task_title": tr('ui.result_actions.text.task_title'), "task": tr('pages.tasks.title'), "run": tr('ui.pages.settings.text.primary'),
+    "task_help": tr('ui.result_actions.text.task_help'),
 }
 
 
@@ -47,7 +44,7 @@ class ResultActionDialog(CdwDialog):
         self.setWindowTitle(title)
         self.resize(self.theme.current.metric("dialog_width"), self.theme.current.metric("result_dialog_height"))
         self.content = CdwVBoxLayout(self, role=LayoutRole.DIALOG, theme=self.theme)
-        self.form = CdwFormLayout(role=LayoutRole.ROW, theme=self.theme)
+        self.form = CdwFormLayout(role=LayoutRole.FORM, theme=self.theme)
         self.content.addLayout(self.form)
         self.feedback = CdwLabel(role=TextRole.ERROR, theme=self.theme)
         self.feedback.setWordWrap(True)
@@ -69,10 +66,17 @@ class ResultActionDialog(CdwDialog):
 
 
 class ExportResultDialog(ResultActionDialog):
+
+    EXPORT_FILTERS = {
+        ExportFormat.CSV: "CSV (*.csv)", ExportFormat.JSON: "JSON (*.json)",
+        ExportFormat.DUCKDB: "DuckDB (*.duckdb)",
+    }
+    EXPORT_EXTENSIONS = {ExportFormat.CSV: ".csv", ExportFormat.JSON: ".json", ExportFormat.DUCKDB: ".duckdb"}
+
     def __init__(self, format, title, directory, parent=None, *, theme=None):
         super().__init__(TEXT["export_title"], parent, theme=theme)
         self.format = ExportFormat(format)
-        self.path_edit = CdwActionLineEdit(str(Path(directory) / (suggested_name(title) + EXPORT_EXTENSIONS[self.format])),
+        self.path_edit = CdwActionLineEdit(str(Path(directory) / (suggested_name(title) + ExportResultDialog.EXPORT_EXTENSIONS[self.format])),
                                            action_text=TEXT["choose"], action_icon=IconName.FOLDER, theme=self.theme)
         self.path_edit.action_button.clicked.connect(self._browse)
         self.form.addRow(TEXT["file"], self.path_edit)
@@ -88,7 +92,7 @@ class ExportResultDialog(ResultActionDialog):
         self.finish(TEXT["export"], self._accept)
 
     def _browse(self):
-        path, _ = CdwFileDialog.getSaveFileName(self, TEXT["export_title"], self.path_edit.text(), EXPORT_FILTERS[self.format])
+        path, _ = CdwFileDialog.getSaveFileName(self, TEXT["export_title"], self.path_edit.text(), ExportResultDialog.EXPORT_FILTERS[self.format])
         if path:
             self.path_edit.setText(path)
 
@@ -108,7 +112,7 @@ class ExportResultDialog(ResultActionDialog):
         try:
             path = Path(raw).expanduser().resolve()
             if not path.suffix:
-                path = path.with_suffix(EXPORT_EXTENSIONS[self.format])
+                path = path.with_suffix(ExportResultDialog.EXPORT_EXTENSIONS[self.format])
         except (ValueError, OSError, RuntimeError) as exc:
             self.feedback.setText(TEXT["path_invalid"].format(details=exc))
             return

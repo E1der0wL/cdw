@@ -30,6 +30,9 @@
     "outline/exclamation-triangle.svg": "3952df551d6c3b81b236831a5457931d9df1d8e5d9112e8f5de01b5c61e3144d",
     "outline/information-circle.svg": "622b5f527d68f6e55cc0556f6720754b16273a53b0aa7c4d6f387d9e27bab076",
     "outline/chevron-down.svg": "2eacb6cecd8f1ab845a2a8417074b0dab9fd9612cdf56d76be45b82adb2933f5",
+    "outline/minus.svg": "d43ac758080df7e19855e135edb168d178818ad0ec3f6f397102a72fded7f47d",
+    "outline/arrows-pointing-out.svg": "c56d582414b52df330e6c3633a7604440a3743da8dbd5598818497ba3dcbc3f7",
+    "outline/square-2-stack.svg": "a1489116fddd28f9d7a7fe2904e1dcc2858c5dc474af534ed7db88ac9692beb4",
     "solid/home.svg": "b1953a35071296a07e7f3d20a97428156af07fe4d1d65dac5b547f521cdfc8fe",
     "solid/circle-stack.svg": "288238a8e41f99af55a76f897aa0ff0749b601bc46671e63c616c9920befabdd",
     "solid/cpu-chip.svg": "74147850b76d732df2602de5fd293d575e0e9ee9a55e3cdf8c617f8b7924bdcc",
@@ -56,6 +59,9 @@
     "solid/exclamation-triangle.svg": "8f3c619e9db09ec9032f04a4db00587f17a10b40ebb73cdf3f4773489517d77a",
     "solid/information-circle.svg": "1b5f0bc163b4fbadecd1568c58197212ed6e0ae417eb40cb56741fe3aa3d5a33",
     "solid/chevron-down.svg": "112a7149fd7b9fa7ecc0125cfe654e6dff188b7c19d6fdc3c31f5066875c6a16",
+    "solid/minus.svg": "a80f955822a42cc920a5ebfa2ada77f3b6d73ce59b1cc70d04aaf269e3f9d1ce",
+    "solid/arrows-pointing-out.svg": "b1e2304ed8466ab4030f3194f6ed90ab13da6e7360728cfd8d065fd5c91a5864",
+    "solid/square-2-stack.svg": "bc5efec77a9cc1233090da9d4dbc23919e428bff4ed31d0db66a1aba3e4a7020",
     "LICENSE": "60e0b68c0f35c078eef3a5d29419d0b03ff84ec1df9c3f9d6e39a519a5ae7985"
   }
 }
